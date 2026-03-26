@@ -1,2 +1,9 @@
 conversations/
 notes
+
+# Swift build artifacts
+.build/
+.swiftpm/
+*.xcodeproj
+Package.resolved
+DerivedData/
