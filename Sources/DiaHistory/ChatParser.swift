@@ -6,12 +6,30 @@ struct ChatParser {
 
     /// Parse AXGroup elements into structured chat messages.
     /// Groups that don't match known patterns (buttons, spacers) are skipped.
+    /// Tool use text is buffered and prepended to the next assistant message.
     static func parse(groups: [AXUIElement]) -> [ChatMessage] {
         var messages: [ChatMessage] = []
+        var toolBuffer: [String] = []
         for group in groups {
-            if let message = classify(group: group) {
-                messages.append(message)
+            guard let message = classify(group: group) else { continue }
+            if message.role == .tool {
+                toolBuffer.append(message.text)
+            } else {
+                if message.role == .assistant && !toolBuffer.isEmpty {
+                    let prefix = toolBuffer.map { "[\($0)]" }.joined(separator: "\n")
+                    let combined = prefix + "\n" + message.text
+                    messages.append(ChatMessage(role: .assistant, text: combined))
+                    toolBuffer.removeAll()
+                } else {
+                    messages.append(message)
+                }
             }
+        }
+        // If there's leftover tool text, attach it to the last assistant message
+        if !toolBuffer.isEmpty, let lastIndex = messages.lastIndex(where: { $0.role == .assistant }) {
+            let prefix = toolBuffer.map { "[\($0)]" }.joined(separator: "\n")
+            let existing = messages[lastIndex].text
+            messages[lastIndex] = ChatMessage(role: .assistant, text: prefix + "\n" + existing)
         }
         return messages
     }

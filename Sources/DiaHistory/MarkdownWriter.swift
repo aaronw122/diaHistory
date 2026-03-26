@@ -129,6 +129,8 @@ struct MarkdownWriter {
                 lines.append("**Dia:**")
                 lines.append(message.text)
             case .tool:
+                // Tool use is now merged into assistant messages by ChatParser;
+                // this case is kept for Codable completeness but should not occur.
                 lines.append("*\(message.text)*")
             }
             lines.append("")  // blank line between blocks
