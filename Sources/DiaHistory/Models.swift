@@ -1,8 +1,8 @@
 import Foundation
 
 /// A single classified chat message from the Dia conversation.
-struct ChatMessage {
-    enum Role: String {
+struct ChatMessage: Codable {
+    enum Role: String, Codable {
         case user
         case assistant
         case tool
