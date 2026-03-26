@@ -28,7 +28,6 @@ struct DiaHistory: ParsableCommand {
 
     // MARK: - Resolved paths
 
-    /// Expand `~` and resolve the output directory to an absolute URL.
     private var resolvedOutputDirectory: URL {
         let expanded = NSString(string: output).expandingTildeInPath
         return URL(fileURLWithPath: expanded, isDirectory: true)
@@ -37,6 +36,7 @@ struct DiaHistory: ParsableCommand {
     // MARK: - Run
 
     func run() throws {
+        // Handle install/uninstall before anything else
         if install {
             let binaryPath = ProcessInfo.processInfo.arguments[0]
             let resolvedOutput = NSString(string: output).expandingTildeInPath
@@ -51,6 +51,38 @@ struct DiaHistory: ParsableCommand {
 
         let outputDir = resolvedOutputDirectory
 
+        Logger.info("diaHistory starting...")
+
+        // Check accessibility permission before anything else
+        if !PermissionChecker.checkAccessibility(prompt: false) {
+            if once {
+                _ = PermissionChecker.checkAccessibility(prompt: true)
+                PermissionChecker.printPermissionInstructions()
+                throw DiaHistoryError.noAccessibilityPermission
+            } else {
+                PermissionChecker.waitForPermission()
+            }
+        }
+
+        Logger.info("Accessibility permission confirmed.")
+
+        if !PermissionChecker.isCodesigned() {
+            Logger.warn("Binary is not codesigned. Accessibility permission may not persist across rebuilds.")
+            Logger.warn("  Run 'make build' to codesign, or use: codesign -s - .build/debug/diahistory")
+        }
+
+        // Create output directory early to fail fast
+        do {
+            try FileManager.default.createDirectory(
+                at: outputDir,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw DiaHistoryError.fileWriteError(
+                "Cannot create output directory '\(outputDir.path)': \(error.localizedDescription)"
+            )
+        }
+
         if once {
             try runOnce(outputDirectory: outputDir)
         } else {
@@ -61,13 +93,11 @@ struct DiaHistory: ParsableCommand {
     // MARK: - Daemon mode
 
     private func runDaemon(outputDirectory: URL) throws {
+        Logger.info("Daemon mode: watching for Dia conversations... (output: \(outputDirectory.path))")
+
         let watcher = try ChatWatcher(outputDirectory: outputDirectory)
 
-        printBanner(mode: "daemon", outputDirectory: outputDirectory)
-
-        if verbose {
-            log("Starting ChatWatcher in daemon mode")
-        }
+        installSignalHandlers()
 
         // Blocks indefinitely via RunLoop
         watcher.start()
@@ -76,25 +106,23 @@ struct DiaHistory: ParsableCommand {
     // MARK: - One-shot mode
 
     private func runOnce(outputDirectory: URL) throws {
-        printBanner(mode: "one-shot", outputDirectory: outputDirectory)
+        Logger.info("One-shot mode: capturing current conversation...")
+
+        guard AccessibilityReader.findDiaProcess() != nil else {
+            Logger.error("Dia is not running.")
+            throw DiaHistoryError.diaNotRunning
+        }
 
         guard let groups = AccessibilityReader.extractChatGroups() else {
-            if verbose {
-                log("No chat panel found in Dia")
-            }
-            print("No active Dia chat found.")
-            throw ExitCode.failure
+            Logger.error("No chat panel found in Dia.")
+            throw DiaHistoryError.noChatPanel
         }
 
         let messages = ChatParser.parse(groups: groups)
 
-        if messages.isEmpty {
-            print("Chat panel found but no messages detected.")
-            throw ExitCode.failure
-        }
-
-        if verbose {
-            log("Captured \(messages.count) message(s)")
+        guard !messages.isEmpty else {
+            Logger.warn("Chat panel found but no messages parsed.")
+            return
         }
 
         if json {
@@ -102,7 +130,7 @@ struct DiaHistory: ParsableCommand {
         } else {
             let writer = try MarkdownWriter(outputDirectory: outputDirectory)
             let url = try writer.write(messages: messages, date: Date())
-            print("Wrote \(messages.count) message(s) to \(url.path)")
+            Logger.info("Captured \(messages.count) messages to \(url.lastPathComponent)")
         }
     }
 
@@ -118,18 +146,16 @@ struct DiaHistory: ParsableCommand {
         print(jsonString)
     }
 
-    // MARK: - Helpers
+    // MARK: - Signal Handling
 
-    private func printBanner(mode: String, outputDirectory: URL) {
-        print("diaHistory watching... (mode: \(mode), output: \(outputDirectory.path))")
-    }
-
-    private func log(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let timestamp = formatter.string(from: Date())
-        FileHandle.standardError.write(
-            Data("[\(timestamp)] \(message)\n".utf8)
-        )
+    private func installSignalHandlers() {
+        signal(SIGINT) { _ in
+            Logger.info("Received SIGINT — shutting down.")
+            Darwin.exit(0)
+        }
+        signal(SIGTERM) { _ in
+            Logger.info("Received SIGTERM — shutting down.")
+            Darwin.exit(0)
+        }
     }
 }

@@ -117,14 +117,28 @@ class ConversationTracker {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(state)
+
+        let data: Data
+        do {
+            data = try encoder.encode(state)
+        } catch {
+            Logger.error("Failed to encode state: \(error.localizedDescription)")
+            throw DiaHistoryError.stateCorrupted("Cannot encode state: \(error.localizedDescription)")
+        }
 
         // Atomic write: temp file in same directory, then rename
         let tempURL = outputDirectory.appendingPathComponent(
             ".\(Self.stateFilename).tmp.\(UUID().uuidString)"
         )
-        try data.write(to: tempURL)
-        _ = try FileManager.default.replaceItemAt(stateURL, withItemAt: tempURL)
+        do {
+            try data.write(to: tempURL)
+            _ = try FileManager.default.replaceItemAt(stateURL, withItemAt: tempURL)
+        } catch {
+            // Clean up temp file on failure
+            try? FileManager.default.removeItem(at: tempURL)
+            Logger.error("Failed to save state to \(stateURL.path): \(error.localizedDescription)")
+            throw DiaHistoryError.fileWriteError("Cannot save state: \(error.localizedDescription)")
+        }
     }
 
     /// Update the index.md file listing all captured conversations.
@@ -157,8 +171,14 @@ class ConversationTracker {
         let tempURL = outputDirectory.appendingPathComponent(
             ".\(Self.indexFilename).tmp.\(UUID().uuidString)"
         )
-        try content.write(to: tempURL, atomically: true, encoding: .utf8)
-        _ = try FileManager.default.replaceItemAt(indexURL, withItemAt: tempURL)
+        do {
+            try content.write(to: tempURL, atomically: true, encoding: .utf8)
+            _ = try FileManager.default.replaceItemAt(indexURL, withItemAt: tempURL)
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            Logger.error("Failed to update index at \(indexURL.path): \(error.localizedDescription)")
+            throw DiaHistoryError.fileWriteError("Cannot update index: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Fingerprinting
@@ -174,15 +194,33 @@ class ConversationTracker {
     // MARK: - Private
 
     /// Load persisted state from the sidecar JSON file.
+    /// If the file is corrupted, logs a warning and returns empty state rather than crashing.
     private static func loadState(from directory: URL) throws -> ConversationState? {
         let stateURL = directory.appendingPathComponent(stateFilename)
         guard FileManager.default.fileExists(atPath: stateURL.path) else {
             return nil
         }
-        let data = try Data(contentsOf: stateURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(ConversationState.self, from: data)
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: stateURL)
+        } catch {
+            Logger.error("Failed to read state file at \(stateURL.path): \(error.localizedDescription)")
+            throw DiaHistoryError.fileWriteError("Cannot read state file: \(error.localizedDescription)")
+        }
+
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(ConversationState.self, from: data)
+        } catch {
+            // State file is corrupted — log and start fresh rather than crashing
+            Logger.warn("State file corrupted, starting fresh: \(error.localizedDescription)")
+            // Back up the corrupted file for debugging
+            let backupURL = directory.appendingPathComponent("\(stateFilename).corrupted")
+            try? FileManager.default.moveItem(at: stateURL, to: backupURL)
+            return nil
+        }
     }
 
     /// Format a date as yyyy-MM-dd.

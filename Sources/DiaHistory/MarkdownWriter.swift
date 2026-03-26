@@ -7,10 +7,17 @@ struct MarkdownWriter {
     /// Initialize with an output directory, creating it if it doesn't exist.
     init(outputDirectory: URL) throws {
         self.outputDirectory = outputDirectory
-        try FileManager.default.createDirectory(
-            at: outputDirectory,
-            withIntermediateDirectories: true
-        )
+        do {
+            try FileManager.default.createDirectory(
+                at: outputDirectory,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            Logger.error("Cannot create output directory '\(outputDirectory.path)': \(error.localizedDescription)")
+            throw DiaHistoryError.fileWriteError(
+                "Cannot create output directory '\(outputDirectory.path)': \(error.localizedDescription)"
+            )
+        }
     }
 
     // MARK: - Public API
@@ -23,7 +30,14 @@ struct MarkdownWriter {
         let name = filename(firstUserMessage: firstUserText, date: date)
         let fileURL = outputDirectory.appendingPathComponent(name)
         let markdown = format(messages: messages, date: date)
-        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+        do {
+            try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            Logger.error("Failed to write markdown to \(fileURL.path): \(error.localizedDescription)")
+            throw DiaHistoryError.fileWriteError(
+                "Cannot write to '\(fileURL.lastPathComponent)': \(error.localizedDescription)"
+            )
+        }
         return fileURL
     }
 
