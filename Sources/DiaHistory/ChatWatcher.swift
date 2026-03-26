@@ -141,7 +141,8 @@ class ChatWatcher {
             teardownObserver()
             transition(to: .noChatOpen)
         } else if pid != observedPid {
-            // Dia restarted with a new PID
+            // Dia restarted with a new PID — reconnect
+            Logger.warn("Dia PID changed (\(observedPid) -> \(pid)) — reconnecting")
             teardownObserver()
             transition(to: .noChatOpen)
         }
@@ -175,7 +176,7 @@ class ChatWatcher {
             let url = try writer.write(messages: capturedMessages, date: conversationDate)
             log("Wrote conversation to \(url.lastPathComponent)")
         } catch {
-            log("Error writing conversation: \(error)")
+            Logger.error("Failed to write conversation: \(error.localizedDescription)")
         }
     }
 
@@ -263,10 +264,7 @@ class ChatWatcher {
     }
 
     private func log(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let timestamp = formatter.string(from: Date())
-        print("[\(timestamp)] \(message)")
+        Logger.info(message)
     }
 }
 
