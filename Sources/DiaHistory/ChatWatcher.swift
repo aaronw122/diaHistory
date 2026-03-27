@@ -2,16 +2,17 @@ import ApplicationServices
 import Cocoa
 import Foundation
 
-/// Daemon loop that monitors Dia for new chat messages.
+/// Daemon loop that monitors Dia for new chat messages once a populated
+/// transcript exists.
 ///
 /// Primary mechanism: AXObserver (event-driven) for change detection.
-/// Falls back to polling for process/panel discovery and when
+/// Falls back to polling for process/transcript discovery and when
 /// AXObserver registration fails.
 class ChatWatcher {
 
     enum State {
         case diaAbsent    // Dia process not found — poll every 30s
-        case noChatOpen   // Dia running, no chat panel — AXObserver + safety poll
+        case noChatOpen   // Dia running, no populated transcript — AXObserver + safety poll
         case watching     // AXObserver active (or polling fallback at 5s)
     }
 
@@ -47,7 +48,7 @@ class ChatWatcher {
 
             case .noChatOpen:
                 // AXObserver should be active, but check liveness and
-                // chat panel as a safety net.
+                // transcript availability as a safety net.
                 checkNoChatOpen()
 
             case .watching:
@@ -87,7 +88,7 @@ class ChatWatcher {
 
         let allGroups = AccessibilityReader.extractAllChatGroups()
         if !allGroups.isEmpty {
-            log("Found \(allGroups.count) chat panel(s)")
+            log("Found \(allGroups.count) populated conversation transcript(s)")
             for groups in allGroups {
                 handleGroups(groups)
             }
@@ -108,7 +109,7 @@ class ChatWatcher {
 
         let allGroups = AccessibilityReader.extractAllChatGroups()
         if !allGroups.isEmpty {
-            log("Chat panel detected (\(allGroups.count) panel(s))")
+            log("Conversation transcript detected (\(allGroups.count) panel(s))")
             for groups in allGroups {
                 handleGroups(groups)
             }
@@ -283,7 +284,7 @@ class ChatWatcher {
         }
 
         if state == .noChatOpen {
-            log("Chat panel detected via AXObserver (\(allGroups.count) panel(s))")
+            log("Conversation transcript detected via AXObserver (\(allGroups.count) panel(s))")
         }
 
         for groups in allGroups {

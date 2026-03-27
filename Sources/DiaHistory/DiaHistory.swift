@@ -124,14 +124,14 @@ struct DiaHistory: ParsableCommand {
         }
 
         guard let groups = AccessibilityReader.extractChatGroups() else {
-            Logger.error("No chat panel found in Dia.")
+            Logger.error("No capturable conversation found in Dia yet.")
             throw DiaHistoryError.noChatPanel
         }
 
         let messages = ChatParser.parse(groups: groups)
 
         guard !messages.isEmpty else {
-            Logger.warn("Chat panel found but no messages parsed.")
+            Logger.warn("Conversation transcript found but no messages parsed.")
             return
         }
 
