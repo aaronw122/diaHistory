@@ -29,6 +29,14 @@ struct MarkdownWriter {
         let firstUserText = messages.first(where: { $0.role == .user })?.text
         let name = filename(firstUserMessage: firstUserText, date: date)
         let fileURL = outputDirectory.appendingPathComponent(name)
+
+        // Ensure the parent directory (date subdirectory) exists
+        let parentDir = fileURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(
+            at: parentDir,
+            withIntermediateDirectories: true
+        )
+
         try write(messages: messages, date: date, to: fileURL)
         return fileURL
     }
@@ -47,14 +55,21 @@ struct MarkdownWriter {
     }
 
     /// Generate the filename for a conversation, handling collisions.
+    /// Returns a relative path from the output directory: `{date}/{slug}.md`
     func filename(firstUserMessage: String?, date: Date) -> String {
         let dateString = Self.dateString(from: date)
         let slug = Self.slugify(firstUserMessage ?? "")
-        let base = "\(dateString)_\(slug)"
+        let dateDir = outputDirectory.appendingPathComponent(dateString)
 
-        // Check for collisions in the output directory
+        // Ensure the date subdirectory exists
+        try? FileManager.default.createDirectory(
+            at: dateDir,
+            withIntermediateDirectories: true
+        )
+
+        // Check for collisions within the date subdirectory
         let fm = FileManager.default
-        let candidate = "\(base).md"
+        let candidate = "\(dateString)/\(slug).md"
         guard fm.fileExists(atPath: outputDirectory.appendingPathComponent(candidate).path)
         else {
             return candidate
@@ -63,7 +78,7 @@ struct MarkdownWriter {
         // Append incrementing counter: -2, -3, ...
         var counter = 2
         while true {
-            let numbered = "\(base)-\(counter).md"
+            let numbered = "\(dateString)/\(slug)-\(counter).md"
             if !fm.fileExists(
                 atPath: outputDirectory.appendingPathComponent(numbered).path)
             {

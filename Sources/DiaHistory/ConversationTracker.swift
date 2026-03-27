@@ -86,7 +86,7 @@ class ConversationTracker {
         let firstUserText = messages.first(where: { $0.role == .user })?.text
         let date = Date()
         let filename = writer?.filename(firstUserMessage: firstUserText, date: date)
-            ?? "\(Self.dateString(from: date))_untitled.md"
+            ?? "\(Self.dateString(from: date))/untitled.md"
 
         let preview = String((firstUserText ?? "untitled").prefix(80))
 
