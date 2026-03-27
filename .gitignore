@@ -2,3 +2,10 @@ conversations/
 notes
 .DS_Store
 .build/
+
+# Swift build artifacts
+.build/
+.swiftpm/
+*.xcodeproj
+Package.resolved
+DerivedData/
