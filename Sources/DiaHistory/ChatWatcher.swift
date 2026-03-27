@@ -11,15 +11,14 @@ class ChatWatcher {
 
     enum State {
         case diaAbsent    // Dia process not found — poll every 30s
-        case noChatOpen   // Dia running, no chat panel — poll every 10s
+        case noChatOpen   // Dia running, no chat panel — AXObserver + safety poll
         case watching     // AXObserver active (or polling fallback at 5s)
     }
 
     let outputDirectory: URL
     private(set) var state: State = .diaAbsent
-    private var capturedMessages: [ChatMessage] = []
+    private var tracker: ConversationTracker
     private var writer: MarkdownWriter
-    private var conversationDate: Date = Date()
 
     // AXObserver state
     private var observer: AXObserver?
@@ -30,6 +29,7 @@ class ChatWatcher {
     init(outputDirectory: URL) throws {
         self.outputDirectory = outputDirectory
         self.writer = try MarkdownWriter(outputDirectory: outputDirectory)
+        self.tracker = try ConversationTracker(outputDirectory: outputDirectory)
     }
 
     // MARK: - Public API
@@ -39,25 +39,33 @@ class ChatWatcher {
         log("ChatWatcher starting, output: \(outputDirectory.path)")
 
         while true {
+            let previousState = state
+
             switch state {
             case .diaAbsent:
                 pollForDia()
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 30))
 
             case .noChatOpen:
-                pollForChatPanel()
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 10))
+                // AXObserver should be active, but check liveness and
+                // chat panel as a safety net.
+                checkNoChatOpen()
 
             case .watching:
                 if usingPollingFallback {
                     pollForChanges()
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 5))
                 } else {
-                    // AXObserver is active — just run the loop briefly
-                    // to let callbacks fire and check Dia is still alive
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 5))
                     verifyDiaStillRunning()
                 }
+            }
+
+            // Skip sleep if state just changed — act on the new state immediately
+            guard state == previousState else { continue }
+
+            switch state {
+            case .diaAbsent:
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 30))
+            case .noChatOpen, .watching:
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 5))
             }
         }
     }
@@ -66,52 +74,49 @@ class ChatWatcher {
 
     private func pollForDia() {
         guard let pid = AccessibilityReader.findDiaProcess() else {
-            return // Stay in diaAbsent
+            return
         }
         log("Dia process found (pid \(pid))")
-        transition(to: .noChatOpen)
+
+        if setupObserver(pid: pid) {
+            log("AXObserver registered on Dia")
+        } else {
+            log("AXObserver setup failed — will use polling fallback")
+            usingPollingFallback = true
+        }
+
+        let allGroups = AccessibilityReader.extractAllChatGroups()
+        if !allGroups.isEmpty {
+            log("Found \(allGroups.count) chat panel(s)")
+            for groups in allGroups {
+                handleGroups(groups)
+            }
+            transition(to: .watching)
+        } else {
+            transition(to: .noChatOpen)
+        }
     }
 
     // MARK: - State: noChatOpen
 
-    private func pollForChatPanel() {
-        // First verify Dia is still running
-        guard let pid = AccessibilityReader.findDiaProcess() else {
+    private func checkNoChatOpen() {
+        guard AccessibilityReader.findDiaProcess() != nil else {
+            teardownObserver()
             transition(to: .diaAbsent)
             return
         }
 
-        guard let groups = AccessibilityReader.extractChatGroups() else {
-            return // Stay in noChatOpen
+        let allGroups = AccessibilityReader.extractAllChatGroups()
+        if !allGroups.isEmpty {
+            log("Chat panel detected (\(allGroups.count) panel(s))")
+            for groups in allGroups {
+                handleGroups(groups)
+            }
+            transition(to: .watching)
         }
-
-        log("Chat panel found with \(groups.count) groups")
-        startWatching(pid: pid, groups: groups)
     }
 
     // MARK: - State: watching
-
-    private func startWatching(pid: pid_t, groups: [AXUIElement]) {
-        // Parse initial messages
-        let messages = ChatParser.parse(groups: groups)
-        capturedMessages = messages
-        conversationDate = Date()
-
-        if !messages.isEmpty {
-            writeConversation()
-        }
-
-        // Try to set up AXObserver
-        if setupObserver(pid: pid) {
-            usingPollingFallback = false
-            log("AXObserver registered — event-driven mode")
-        } else {
-            usingPollingFallback = true
-            log("AXObserver setup failed — polling fallback (5s)")
-        }
-
-        transition(to: .watching)
-    }
 
     private func pollForChanges() {
         guard AccessibilityReader.findDiaProcess() != nil else {
@@ -120,13 +125,15 @@ class ChatWatcher {
             return
         }
 
-        guard let groups = AccessibilityReader.extractChatGroups() else {
-            teardownObserver()
+        let allGroups = AccessibilityReader.extractAllChatGroups()
+        if allGroups.isEmpty {
             transition(to: .noChatOpen)
             return
         }
 
-        processGroups(groups)
+        for groups in allGroups {
+            handleGroups(groups)
+        }
     }
 
     private func verifyDiaStillRunning() {
@@ -136,47 +143,68 @@ class ChatWatcher {
             return
         }
 
-        // Also verify chat panel still exists
-        if AccessibilityReader.extractChatGroups() == nil {
-            teardownObserver()
-            transition(to: .noChatOpen)
-        } else if pid != observedPid {
-            // Dia restarted with a new PID — reconnect
+        if pid != observedPid {
             Logger.warn("Dia PID changed (\(observedPid) -> \(pid)) — reconnecting")
             teardownObserver()
-            transition(to: .noChatOpen)
-        }
-    }
-
-    /// Compare new messages against captured state and append any new ones.
-    private func processGroups(_ groups: [AXUIElement]) {
-        let messages = ChatParser.parse(groups: groups)
-
-        guard messages.count > capturedMessages.count else {
-            // If message count decreased, a new conversation may have started
-            if messages.count < capturedMessages.count && !messages.isEmpty {
-                log("Message count decreased — new conversation detected")
-                capturedMessages = messages
-                conversationDate = Date()
-                writeConversation()
+            transition(to: .diaAbsent)
+        } else {
+            // Process all panels — if none exist, go to noChatOpen
+            let allGroups = AccessibilityReader.extractAllChatGroups()
+            if allGroups.isEmpty {
+                transition(to: .noChatOpen)
+            } else {
+                for groups in allGroups {
+                    handleGroups(groups)
+                }
             }
-            return
         }
-
-        // New messages appended
-        let newMessages = Array(messages.dropFirst(capturedMessages.count))
-        log("\(newMessages.count) new message(s) detected")
-        capturedMessages = messages
-        writeConversation()
     }
 
-    private func writeConversation() {
-        guard !capturedMessages.isEmpty else { return }
+    // MARK: - Core: handle groups via ConversationTracker
+
+    /// Parse groups and delegate to ConversationTracker for identity + file management.
+    private func handleGroups(_ groups: [AXUIElement]) {
+        let messages = ChatParser.parse(groups: groups)
+        guard !messages.isEmpty else { return }
+
+        let result = tracker.track(messages: messages)
+
+        switch result {
+        case .newConversation(let filePath, let allMessages):
+            log("New conversation: \(filePath.lastPathComponent)")
+            writeMessages(allMessages, to: filePath, isFullRewrite: true)
+            saveState()
+
+        case .existingConversation(let filePath, _):
+            // Rewrite the full conversation (simpler than appending, and messages
+            // includes all messages including new ones via tracker state)
+            let allMessages = messages
+            writeMessages(allMessages, to: filePath, isFullRewrite: true)
+            saveState()
+
+        case .noChange:
+            break
+        }
+    }
+
+    private func writeMessages(_ messages: [ChatMessage], to fileURL: URL, isFullRewrite: Bool) {
         do {
-            let url = try writer.write(messages: capturedMessages, date: conversationDate)
-            log("Wrote conversation to \(url.lastPathComponent)")
+            let date = tracker.state.conversations.values
+                .first(where: { fileURL.lastPathComponent == $0.outputFilePath })?
+                .createdAt ?? Date()
+            try writer.write(messages: messages, date: date, to: fileURL)
+            log("Updated \(fileURL.lastPathComponent) (\(messages.count) messages)")
         } catch {
-            Logger.error("Failed to write conversation: \(error.localizedDescription)")
+            Logger.error("Failed to write: \(error.localizedDescription)")
+        }
+    }
+
+    private func saveState() {
+        do {
+            try tracker.save()
+            try tracker.updateIndex()
+        } catch {
+            Logger.error("Failed to save state: \(error.localizedDescription)")
         }
     }
 
@@ -192,14 +220,12 @@ class ChatWatcher {
 
         let appElement = AXUIElementCreateApplication(pid)
 
-        // Register for value-changed and children-changed notifications on the app
         let notifications: [String] = [
             kAXValueChangedNotification,
             kAXUIElementDestroyedNotification,
             kAXCreatedNotification,
         ]
 
-        // Pass self as context via Unmanaged pointer
         let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
 
         var registeredAny = false
@@ -226,6 +252,7 @@ class ChatWatcher {
         self.observer = obs
         self.observedPid = pid
         self.observedElement = appElement
+        self.usingPollingFallback = false
 
         return true
     }
@@ -241,18 +268,31 @@ class ChatWatcher {
         observer = nil
         observedElement = nil
         observedPid = 0
-        capturedMessages = []
+        usingPollingFallback = false
     }
 
     /// Called from the AXObserver C callback — re-extract and diff.
     fileprivate func handleAXNotification() {
-        guard let groups = AccessibilityReader.extractChatGroups() else {
-            // Chat panel disappeared
-            teardownObserver()
-            transition(to: .noChatOpen)
+        let allGroups = AccessibilityReader.extractAllChatGroups()
+
+        if allGroups.isEmpty {
+            if state == .watching {
+                transition(to: .noChatOpen)
+            }
             return
         }
-        processGroups(groups)
+
+        if state == .noChatOpen {
+            log("Chat panel detected via AXObserver (\(allGroups.count) panel(s))")
+        }
+
+        for groups in allGroups {
+            handleGroups(groups)
+        }
+
+        if state == .noChatOpen {
+            transition(to: .watching)
+        }
     }
 
     // MARK: - Helpers
@@ -270,8 +310,6 @@ class ChatWatcher {
 
 // MARK: - AXObserver C Callback
 
-/// Global callback function for AXObserver. Bridges to the ChatWatcher instance
-/// via the refcon pointer.
 private func axObserverCallback(
     _ observer: AXObserver,
     _ element: AXUIElement,

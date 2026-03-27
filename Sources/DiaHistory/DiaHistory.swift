@@ -1,4 +1,5 @@
 import ArgumentParser
+import Cocoa
 import Foundation
 
 @main
@@ -26,6 +27,9 @@ struct DiaHistory: ParsableCommand {
     @Flag(name: .long, help: "Uninstall the macOS LaunchAgent.")
     var uninstall: Bool = false
 
+    @Flag(name: .long, help: "Dump Dia's accessibility tree for debugging.")
+    var debugTree: Bool = false
+
     // MARK: - Resolved paths
 
     private var resolvedOutputDirectory: URL {
@@ -46,6 +50,12 @@ struct DiaHistory: ParsableCommand {
 
         if uninstall {
             try LaunchAgent.uninstall()
+            return
+        }
+
+        // Debug tree dump — skip permission/output checks
+        if debugTree {
+            try dumpAccessibilityTree()
             return
         }
 
@@ -144,6 +154,51 @@ struct DiaHistory: ParsableCommand {
             throw ExitCode.failure
         }
         print(jsonString)
+    }
+
+    // MARK: - Debug Tree Dump
+
+    private func dumpAccessibilityTree() throws {
+        guard let pid = AccessibilityReader.findDiaProcess() else {
+            print("Dia process not found.")
+            print("\nRunning apps with 'dia' in name/bundle:")
+            for app in NSWorkspace.shared.runningApplications {
+                let name = app.localizedName ?? "?"
+                let bundle = app.bundleIdentifier ?? "?"
+                if name.localizedCaseInsensitiveContains("dia") ||
+                   bundle.localizedCaseInsensitiveContains("dia") {
+                    print("  \(name) (\(bundle)) pid=\(app.processIdentifier)")
+                }
+            }
+            return
+        }
+
+        print("Found Dia at pid \(pid)")
+        let appElement = AXUIElementCreateApplication(pid)
+        dumpElement(appElement, depth: 0, maxDepth: 6)
+    }
+
+    private func dumpElement(_ element: AXUIElement, depth: Int, maxDepth: Int) {
+        guard depth <= maxDepth else { return }
+        let indent = String(repeating: "  ", count: depth)
+
+        let role = AccessibilityReader.attribute(.role, of: element) as? String ?? "?"
+        let desc = AccessibilityReader.attribute(.description, of: element) as? String
+        let value = AccessibilityReader.attribute(.value, of: element)
+        let title = AccessibilityReader.attribute(.title, of: element) as? String
+
+        var line = "\(indent)[\(role)]"
+        if let title = title, !title.isEmpty { line += " title=\"\(title.prefix(60))\"" }
+        if let desc = desc, !desc.isEmpty { line += " desc=\"\(desc.prefix(60))\"" }
+        if let value = value as? String, !value.isEmpty { line += " value=\"\(value.prefix(80))\"" }
+        print(line)
+
+        guard let children = AccessibilityReader.attribute(.children, of: element) as? [AXUIElement] else {
+            return
+        }
+        for child in children {
+            dumpElement(child, depth: depth + 1, maxDepth: maxDepth)
+        }
     }
 
     // MARK: - Signal Handling

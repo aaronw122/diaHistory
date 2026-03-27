@@ -10,12 +10,7 @@ struct AccessibilityReader {
     static func findDiaProcess() -> pid_t? {
         let apps = NSWorkspace.shared.runningApplications
         for app in apps {
-            if let bundleID = app.bundleIdentifier,
-               bundleID.localizedCaseInsensitiveContains("dia") {
-                return app.processIdentifier
-            }
-            if let name = app.localizedName,
-               name == "Dia" {
+            if app.bundleIdentifier == "company.thebrowser.dia" {
                 return app.processIdentifier
             }
         }
@@ -34,13 +29,35 @@ struct AccessibilityReader {
             return nil
         }
 
-        // Search each window for the chat panel
+        // Return the first chat panel found (for --once and backwards compat).
+        // Use extractAllChatGroups() for multi-conversation capture.
         for window in windows {
             if let groups = findChatGroups(in: window) {
                 return groups
             }
         }
         return nil
+    }
+
+    /// Extract chat groups from ALL windows. Returns one array of groups per
+    /// window that has a chat panel open. Empty array if no panels found.
+    static func extractAllChatGroups() -> [[AXUIElement]] {
+        guard let pid = findDiaProcess() else { return [] }
+
+        let appElement = AXUIElementCreateApplication(pid)
+
+        guard let windows = attribute(.windows, of: appElement) as? [AXUIElement],
+              !windows.isEmpty else {
+            return []
+        }
+
+        var allGroups: [[AXUIElement]] = []
+        for window in windows {
+            if let groups = findChatGroups(in: window) {
+                allGroups.append(groups)
+            }
+        }
+        return allGroups
     }
 
     // MARK: - Tree Walking

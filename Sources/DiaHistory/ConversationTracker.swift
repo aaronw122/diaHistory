@@ -16,6 +16,7 @@ struct ConversationRecord: Codable {
     let outputFilePath: String
     let firstMessagePreview: String
     var lastMessageCount: Int
+    var contentHash: String?  // Optional for backwards compat with old state files
     let createdAt: Date
 }
 
@@ -60,30 +61,22 @@ class ConversationTracker {
         guard !messages.isEmpty else { return .noChange }
 
         let fingerprint = Self.fingerprint(for: messages)
+        let newHash = Self.contentHash(for: messages)
 
-        // Same conversation we're already tracking — check for new messages
-        if fingerprint == state.activeFingerprint,
-           let record = state.conversations[fingerprint]
-        {
-            let messageCount = messages.count
-            if messageCount > record.lastMessageCount {
-                let newMessages = Array(messages.dropFirst(record.lastMessageCount))
-                let filePath = outputDirectory.appendingPathComponent(record.outputFilePath)
-                state.conversations[fingerprint]?.lastMessageCount = messageCount
-                return .existingConversation(filePath: filePath, newMessages: newMessages)
-            }
-            return .noChange
-        }
-
-        // Known conversation we're returning to (different from active)
+        // Known conversation (active or returning to) — check for changes
         if let record = state.conversations[fingerprint] {
-            state.activeFingerprint = fingerprint
-            let messageCount = messages.count
-            if messageCount > record.lastMessageCount {
-                let newMessages = Array(messages.dropFirst(record.lastMessageCount))
+            if fingerprint != state.activeFingerprint {
+                state.activeFingerprint = fingerprint
+            }
+
+            let countChanged = messages.count != record.lastMessageCount
+            let hashChanged = record.contentHash == nil || record.contentHash != newHash
+
+            if countChanged || hashChanged {
                 let filePath = outputDirectory.appendingPathComponent(record.outputFilePath)
-                state.conversations[fingerprint]?.lastMessageCount = messageCount
-                return .existingConversation(filePath: filePath, newMessages: newMessages)
+                state.conversations[fingerprint]?.lastMessageCount = messages.count
+                state.conversations[fingerprint]?.contentHash = newHash
+                return .existingConversation(filePath: filePath, newMessages: messages)
             }
             return .noChange
         }
@@ -101,6 +94,7 @@ class ConversationTracker {
             outputFilePath: filename,
             firstMessagePreview: preview,
             lastMessageCount: messages.count,
+            contentHash: newHash,
             createdAt: date
         )
 
@@ -181,12 +175,23 @@ class ConversationTracker {
         }
     }
 
-    // MARK: - Fingerprinting
+    // MARK: - Fingerprinting & Hashing
 
     /// Generate a SHA256 fingerprint from the first user message in the conversation.
     static func fingerprint(for messages: [ChatMessage]) -> String {
         let firstUserText = messages.first(where: { $0.role == .user })?.text ?? ""
         let data = Data(firstUserText.utf8)
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    /// SHA256 hash of all message roles + texts. Detects content changes
+    /// even when message count stays the same (streaming, regeneration, edits).
+    static func contentHash(for messages: [ChatMessage]) -> String {
+        // Use role + null separator + text per message, joined by record separator.
+        // Avoids boundary ambiguity from newline-joined text.
+        let canonical = messages.map { "\($0.role.rawValue)\0\($0.text)" }.joined(separator: "\u{1E}")
+        let data = Data(canonical.utf8)
         let hash = SHA256.hash(data: data)
         return hash.compactMap { String(format: "%02x", $0) }.joined()
     }

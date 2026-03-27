@@ -29,6 +29,12 @@ struct MarkdownWriter {
         let firstUserText = messages.first(where: { $0.role == .user })?.text
         let name = filename(firstUserMessage: firstUserText, date: date)
         let fileURL = outputDirectory.appendingPathComponent(name)
+        try write(messages: messages, date: date, to: fileURL)
+        return fileURL
+    }
+
+    /// Write a conversation to a specific file URL (overwrites existing content).
+    func write(messages: [ChatMessage], date: Date, to fileURL: URL) throws {
         let markdown = format(messages: messages, date: date)
         do {
             try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -38,7 +44,6 @@ struct MarkdownWriter {
                 "Cannot write to '\(fileURL.lastPathComponent)': \(error.localizedDescription)"
             )
         }
-        return fileURL
     }
 
     /// Generate the filename for a conversation, handling collisions.
