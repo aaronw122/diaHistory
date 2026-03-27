@@ -15,7 +15,7 @@ enum DiaHistoryError: Error, LocalizedError {
         case .diaNotRunning:
             return "Dia browser is not running"
         case .noChatPanel:
-            return "No chat panel found in Dia"
+            return "No capturable conversation found in Dia yet"
         case .fileWriteError(let detail):
             return "File write failed: \(detail)"
         case .stateCorrupted(let detail):

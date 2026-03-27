@@ -1,8 +1,17 @@
 import Cocoa
 
-/// Finds the Dia browser process and extracts chat AXGroup elements
-/// from its accessibility tree.
+/// Finds the Dia browser process and extracts capturable conversation
+/// transcript AXGroup elements from its accessibility tree.
 struct AccessibilityReader {
+    private static let maxTraversalDepth = 64
+    private static let maxTraversalNodes = 2_000
+    private static let ignoredTraversalRoles: Set<String> = [
+        "AXWebArea",
+        kAXMenuBarRole as String,
+        kAXMenuBarItemRole as String,
+        kAXMenuRole as String,
+        kAXMenuItemRole as String,
+    ]
 
     // MARK: - Public API
 
@@ -17,8 +26,8 @@ struct AccessibilityReader {
         return nil
     }
 
-    /// Extract chat AXGroup elements from Dia's accessibility tree.
-    /// Returns nil if Dia isn't running or no chat panel is found.
+    /// Extract transcript AXGroup elements from Dia's accessibility tree.
+    /// Returns nil if Dia isn't running or no populated transcript is found.
     static func extractChatGroups() -> [AXUIElement]? {
         guard let pid = findDiaProcess() else { return nil }
 
@@ -29,7 +38,7 @@ struct AccessibilityReader {
             return nil
         }
 
-        // Return the first chat panel found (for --once and backwards compat).
+        // Return the first populated transcript found (for --once and backwards compat).
         // Use extractAllChatGroups() for multi-conversation capture.
         for window in windows {
             if let groups = findChatGroups(in: window) {
@@ -39,8 +48,8 @@ struct AccessibilityReader {
         return nil
     }
 
-    /// Extract chat groups from ALL windows. Returns one array of groups per
-    /// window that has a chat panel open. Empty array if no panels found.
+    /// Extract transcript groups from ALL windows. Returns one array of groups per
+    /// window that has a populated transcript. Empty array if none are found.
     static func extractAllChatGroups() -> [[AXUIElement]] {
         guard let pid = findDiaProcess() else { return [] }
 
@@ -62,27 +71,40 @@ struct AccessibilityReader {
 
     // MARK: - Tree Walking
 
-    /// Walk the window looking for the chat panel structure:
-    /// AXScrollArea → AXList → AXList with 3+ AXGroup children
-    private static func findChatGroups(in element: AXUIElement) -> [AXUIElement]? {
-        guard let children = attribute(.children, of: element) as? [AXUIElement] else {
-            return nil
+    /// Walk the window looking for a populated transcript structure:
+    /// AXScrollArea → AXList → AXList with 3+ AXGroup children.
+    /// Empty/open chats are intentionally ignored until the first message appears.
+    private static func findChatGroups(in root: AXUIElement) -> [AXUIElement]? {
+        struct WorkItem {
+            let element: AXUIElement
+            let depth: Int
         }
 
-        for child in children {
-            guard let role = attribute(.role, of: child) as? String else { continue }
+        var stack = [WorkItem(element: root, depth: 0)]
+        var visitedNodes = 0
 
-            if role == kAXScrollAreaRole as String {
-                if let groups = findChatListInScrollArea(child) {
+        while let item = stack.popLast() {
+            guard item.depth < maxTraversalDepth else { continue }
+            guard let children = attribute(.children, of: item.element) as? [AXUIElement] else {
+                continue
+            }
+
+            for child in children.reversed() {
+                visitedNodes += 1
+                guard visitedNodes <= maxTraversalNodes else { return nil }
+
+                guard let role = attribute(.role, of: child) as? String else { continue }
+
+                if role == kAXScrollAreaRole as String,
+                   let groups = findChatListInScrollArea(child) {
                     return groups
                 }
-            }
 
-            // Recurse into other containers
-            if let groups = findChatGroups(in: child) {
-                return groups
+                guard !ignoredTraversalRoles.contains(role) else { continue }
+                stack.append(WorkItem(element: child, depth: item.depth + 1))
             }
         }
+
         return nil
     }
 
