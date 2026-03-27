@@ -1,5 +1,7 @@
 conversations/
 notes
+.DS_Store
+.build/
 
 # Swift build artifacts
 .build/
