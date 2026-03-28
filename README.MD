@@ -8,10 +8,7 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 
 - **Build Anki cards** from concepts and patterns that came up in conversation
 - **Revisit old insights** — that breakthrough explanation or debugging session you half-remember is now grep-able
-- **Track your learning over time** — see what you were struggling with a month ago vs. today
-- **Feed conversations into other tools** — summarizers, search indices, or your own scripts
-- **Keep a record of what was built and why** — useful when you return to a project after time away
-- **Learn with Claude Code** — review past sessions to reinforce patterns, spot recurring gaps, or extract the moments where something finally clicked
+- **Track your learning over time** — work with Claude code and other tools to spot moments for growth
 
 ## Features
 
