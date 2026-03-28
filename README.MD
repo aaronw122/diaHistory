@@ -11,6 +11,7 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 - **Track your learning over time** — see what you were struggling with a month ago vs. today
 - **Feed conversations into other tools** — summarizers, search indices, or your own scripts
 - **Keep a record of what was built and why** — useful when you return to a project after time away
+- **Learn with Claude Code** — review past sessions to reinforce patterns, spot recurring gaps, or extract the moments where something finally clicked
 
 ## Features
 
