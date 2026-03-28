@@ -7,7 +7,7 @@ A macOS CLI tool that automatically captures and archives your [Dia](https://dia
 Dia conversations are ephemeral by default — once you close a tab, the context is gone. diaHistory gives you a persistent, searchable archive of everything you've discussed. With your conversations saved as plain markdown files, you can:
 
 - **Build Anki cards** from concepts and patterns that came up in conversation
-- **Revisit old insights** — that breakthrough explanation or debugging session you half-remember is now grep-able
+- **Revisit old insights** — that breakthrough explanation or learning session you half-remember is now grep-able
 - **Track your learning over time** — work with Claude code and other tools to spot moments for growth
 
 ## Features
