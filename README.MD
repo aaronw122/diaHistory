@@ -2,6 +2,16 @@
 
 A macOS CLI tool that automatically captures and archives your [Dia](https://dia.chat) browser conversations as local markdown or JSON files.
 
+## Why
+
+Dia conversations are ephemeral by default — once you close a tab, the context is gone. diaHistory gives you a persistent, searchable archive of everything you've discussed. With your conversations saved as plain markdown files, you can:
+
+- **Build Anki cards** from concepts and patterns that came up in conversation
+- **Revisit old insights** — that breakthrough explanation or debugging session you half-remember is now grep-able
+- **Track your learning over time** — see what you were struggling with a month ago vs. today
+- **Feed conversations into other tools** — summarizers, search indices, or your own scripts
+- **Keep a record of what was built and why** — useful when you return to a project after time away
+
 ## Features
 
 - **Real-time capture** — watches for Dia conversations using AXObserver with polling fallback
