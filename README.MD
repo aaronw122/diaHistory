@@ -53,8 +53,6 @@ cp .build/release/diahistory /usr/local/bin/
 
 ## Setup
 
-For most people, the goal is to let diaHistory start automatically on login and run in the background.
-
 1. Run `diahistory` once so macOS can detect it and diaHistory can check Accessibility access.
 2. Open **System Settings → Privacy & Security → Accessibility**.
 3. Add and enable `diahistory` (or your terminal app if running from source).
@@ -62,23 +60,11 @@ For most people, the goal is to let diaHistory start automatically on login and 
 
 After that, diaHistory will start automatically on login and keep capturing in the background.
 
-## Common commands
+## Other commands
 
 ```bash
-# Recommended: install auto-start on login
-diahistory --install
-
-# Capture the current conversation once and exit
-diahistory --once
-
-# Capture once as JSON instead of markdown
-diahistory --once --json
-
 # Use a different output directory
 diahistory --output ~/MyChats
-
-# Remove auto-start on login
-diahistory --uninstall
 ```
 
 Conversations are saved to `~/Documents/DiaChats/` by default. Use `--output` to change this.
