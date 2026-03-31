@@ -86,11 +86,11 @@ class ChatWatcher {
             usingPollingFallback = true
         }
 
-        let allGroups = AccessibilityReader.extractAllChatGroups()
-        if !allGroups.isEmpty {
-            log("Found \(allGroups.count) populated conversation transcript(s)")
-            for groups in allGroups {
-                handleGroups(groups)
+        let captures = AccessibilityReader.extractAllChatCaptures()
+        if !captures.isEmpty {
+            log("Found \(captures.count) populated conversation transcript(s)")
+            for capture in captures {
+                handleCapture(capture)
             }
             transition(to: .watching)
         } else {
@@ -107,11 +107,11 @@ class ChatWatcher {
             return
         }
 
-        let allGroups = AccessibilityReader.extractAllChatGroups()
-        if !allGroups.isEmpty {
-            log("Conversation transcript detected (\(allGroups.count) panel(s))")
-            for groups in allGroups {
-                handleGroups(groups)
+        let captures = AccessibilityReader.extractAllChatCaptures()
+        if !captures.isEmpty {
+            log("Conversation transcript detected (\(captures.count) panel(s))")
+            for capture in captures {
+                handleCapture(capture)
             }
             transition(to: .watching)
         }
@@ -126,14 +126,14 @@ class ChatWatcher {
             return
         }
 
-        let allGroups = AccessibilityReader.extractAllChatGroups()
-        if allGroups.isEmpty {
+        let captures = AccessibilityReader.extractAllChatCaptures()
+        if captures.isEmpty {
             transition(to: .noChatOpen)
             return
         }
 
-        for groups in allGroups {
-            handleGroups(groups)
+        for capture in captures {
+            handleCapture(capture)
         }
     }
 
@@ -150,12 +150,12 @@ class ChatWatcher {
             transition(to: .diaAbsent)
         } else {
             // Process all panels — if none exist, go to noChatOpen
-            let allGroups = AccessibilityReader.extractAllChatGroups()
-            if allGroups.isEmpty {
+            let captures = AccessibilityReader.extractAllChatCaptures()
+            if captures.isEmpty {
                 transition(to: .noChatOpen)
             } else {
-                for groups in allGroups {
-                    handleGroups(groups)
+                for capture in captures {
+                    handleCapture(capture)
                 }
             }
         }
@@ -164,23 +164,20 @@ class ChatWatcher {
     // MARK: - Core: handle groups via ConversationTracker
 
     /// Parse groups and delegate to ConversationTracker for identity + file management.
-    private func handleGroups(_ groups: [AXUIElement]) {
-        let messages = ChatParser.parse(groups: groups)
+    private func handleCapture(_ capture: CapturedConversation) {
+        let messages = ChatParser.parse(groups: capture.groups)
         guard !messages.isEmpty else { return }
 
-        let result = tracker.track(messages: messages)
+        let result = tracker.track(messages: messages, metadata: capture.metadata)
 
         switch result {
-        case .newConversation(let filePath, let allMessages):
+        case .newConversation(let filePath, let createdAt, let metadata):
             log("New conversation: \(filePath.lastPathComponent)")
-            writeMessages(allMessages, to: filePath, isFullRewrite: true)
+            writeMessages(messages, metadata: metadata, date: createdAt, to: filePath)
             saveState()
 
-        case .existingConversation(let filePath, _):
-            // Rewrite the full conversation (simpler than appending, and messages
-            // includes all messages including new ones via tracker state)
-            let allMessages = messages
-            writeMessages(allMessages, to: filePath, isFullRewrite: true)
+        case .existingConversation(let filePath, let createdAt, let metadata):
+            writeMessages(messages, metadata: metadata, date: createdAt, to: filePath)
             saveState()
 
         case .noChange:
@@ -188,12 +185,14 @@ class ChatWatcher {
         }
     }
 
-    private func writeMessages(_ messages: [ChatMessage], to fileURL: URL, isFullRewrite: Bool) {
+    private func writeMessages(
+        _ messages: [ChatMessage],
+        metadata: ConversationMetadata?,
+        date: Date,
+        to fileURL: URL
+    ) {
         do {
-            let date = tracker.state.conversations.values
-                .first(where: { fileURL.lastPathComponent == $0.outputFilePath })?
-                .createdAt ?? Date()
-            try writer.write(messages: messages, date: date, to: fileURL)
+            try writer.write(messages: messages, metadata: metadata, date: date, to: fileURL)
             log("Updated \(fileURL.lastPathComponent) (\(messages.count) messages)")
         } catch {
             Logger.error("Failed to write: \(error.localizedDescription)")
@@ -274,9 +273,9 @@ class ChatWatcher {
 
     /// Called from the AXObserver C callback — re-extract and diff.
     fileprivate func handleAXNotification() {
-        let allGroups = AccessibilityReader.extractAllChatGroups()
+        let captures = AccessibilityReader.extractAllChatCaptures()
 
-        if allGroups.isEmpty {
+        if captures.isEmpty {
             if state == .watching {
                 transition(to: .noChatOpen)
             }
@@ -284,11 +283,11 @@ class ChatWatcher {
         }
 
         if state == .noChatOpen {
-            log("Conversation transcript detected via AXObserver (\(allGroups.count) panel(s))")
+            log("Conversation transcript detected via AXObserver (\(captures.count) panel(s))")
         }
 
-        for groups in allGroups {
-            handleGroups(groups)
+        for capture in captures {
+            handleCapture(capture)
         }
 
         if state == .noChatOpen {

@@ -17,6 +17,7 @@ struct ConversationRecord: Codable {
     let firstMessagePreview: String
     var lastMessageCount: Int
     var contentHash: String?  // Optional for backwards compat with old state files
+    var metadata: ConversationMetadata?
     let createdAt: Date
 }
 
@@ -24,8 +25,8 @@ struct ConversationRecord: Codable {
 
 /// Outcome of comparing current messages against known conversations.
 enum TrackingResult {
-    case existingConversation(filePath: URL, newMessages: [ChatMessage])
-    case newConversation(filePath: URL, allMessages: [ChatMessage])
+    case existingConversation(filePath: URL, createdAt: Date, metadata: ConversationMetadata?)
+    case newConversation(filePath: URL, createdAt: Date, metadata: ConversationMetadata?)
     case noChange
 }
 
@@ -57,7 +58,7 @@ class ConversationTracker {
     // MARK: - Public API
 
     /// Given current messages, determine if this is a new or existing conversation.
-    func track(messages: [ChatMessage]) -> TrackingResult {
+    func track(messages: [ChatMessage], metadata: ConversationMetadata?) -> TrackingResult {
         guard !messages.isEmpty else { return .noChange }
 
         let fingerprint = Self.fingerprint(for: messages)
@@ -71,12 +72,22 @@ class ConversationTracker {
 
             let countChanged = messages.count != record.lastMessageCount
             let hashChanged = record.contentHash == nil || record.contentHash != newHash
+            let mergedMetadata = ConversationMetadata.mergedPreservingExisting(
+                existing: record.metadata,
+                candidate: metadata
+            )
+            let metadataBackfilled = record.metadata != mergedMetadata
 
-            if countChanged || hashChanged {
+            if countChanged || hashChanged || metadataBackfilled {
                 let filePath = outputDirectory.appendingPathComponent(record.outputFilePath)
                 state.conversations[fingerprint]?.lastMessageCount = messages.count
                 state.conversations[fingerprint]?.contentHash = newHash
-                return .existingConversation(filePath: filePath, newMessages: messages)
+                state.conversations[fingerprint]?.metadata = mergedMetadata
+                return .existingConversation(
+                    filePath: filePath,
+                    createdAt: record.createdAt,
+                    metadata: mergedMetadata
+                )
             }
             return .noChange
         }
@@ -95,6 +106,7 @@ class ConversationTracker {
             firstMessagePreview: preview,
             lastMessageCount: messages.count,
             contentHash: newHash,
+            metadata: ConversationMetadata.mergedPreservingExisting(existing: nil, candidate: metadata),
             createdAt: date
         )
 
@@ -102,7 +114,11 @@ class ConversationTracker {
         state.activeFingerprint = fingerprint
 
         let filePath = outputDirectory.appendingPathComponent(filename)
-        return .newConversation(filePath: filePath, allMessages: messages)
+        return .newConversation(
+            filePath: filePath,
+            createdAt: date,
+            metadata: record.metadata
+        )
     }
 
     /// Persist state to disk atomically (write to temp, then rename).
@@ -147,15 +163,16 @@ class ConversationTracker {
         var lines: [String] = []
         lines.append("# Captured Conversations")
         lines.append("")
-        lines.append("| Date | Title | Messages | File |")
-        lines.append("|------|-------|----------|------|")
+        lines.append("| Date | Title | Context | Messages | File |")
+        lines.append("|------|-------|---------|----------|------|")
 
         for (_, record) in sorted {
             let dateStr = Self.dateString(from: record.createdAt)
-            let title = record.firstMessagePreview
+            let title = Self.sanitizedIndexTableCell(record.firstMessagePreview)
+            let context = Self.sanitizedIndexTableCell(Self.indexContext(for: record.metadata))
             let count = record.lastMessageCount
             let file = record.outputFilePath
-            lines.append("| \(dateStr) | \(title) | \(count) | [\(file)](\(file)) |")
+            lines.append("| \(dateStr) | \(title) | \(context) | \(count) | [\(file)](\(file)) |")
         }
 
         lines.append("")  // trailing newline
@@ -234,5 +251,29 @@ class ConversationTracker {
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter.string(from: date)
+    }
+
+    private static func indexContext(for metadata: ConversationMetadata?) -> String {
+        guard let metadata else { return "" }
+
+        if let pageTitle = metadata.pageTitle, let domain = metadata.domain {
+            return "\(domain) - \(pageTitle)"
+        }
+
+        return metadata.pageTitle ?? metadata.domain ?? ""
+    }
+
+    static func sanitizedIndexTableCell(_ value: String) -> String {
+        let normalizedWhitespace = value
+            .components(separatedBy: .newlines)
+            .joined(separator: " ")
+            .replacingOccurrences(
+                of: #"\s+"#,
+                with: " ",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return normalizedWhitespace.replacingOccurrences(of: "|", with: #"\|"#)
     }
 }

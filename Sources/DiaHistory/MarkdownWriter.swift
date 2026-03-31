@@ -25,7 +25,7 @@ struct MarkdownWriter {
     /// Write a conversation to a new markdown file.
     /// Returns the URL of the created file.
     @discardableResult
-    func write(messages: [ChatMessage], date: Date) throws -> URL {
+    func write(messages: [ChatMessage], metadata: ConversationMetadata?, date: Date) throws -> URL {
         let firstUserText = messages.first(where: { $0.role == .user })?.text
         let name = filename(firstUserMessage: firstUserText, date: date)
         let fileURL = outputDirectory.appendingPathComponent(name)
@@ -37,13 +37,13 @@ struct MarkdownWriter {
             withIntermediateDirectories: true
         )
 
-        try write(messages: messages, date: date, to: fileURL)
+        try write(messages: messages, metadata: metadata, date: date, to: fileURL)
         return fileURL
     }
 
     /// Write a conversation to a specific file URL (overwrites existing content).
-    func write(messages: [ChatMessage], date: Date, to fileURL: URL) throws {
-        let markdown = format(messages: messages, date: date)
+    func write(messages: [ChatMessage], metadata: ConversationMetadata?, date: Date, to fileURL: URL) throws {
+        let markdown = format(messages: messages, metadata: metadata, date: date)
         do {
             try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
         } catch {
@@ -134,11 +134,23 @@ struct MarkdownWriter {
     // MARK: - Private
 
     /// Format messages into a markdown string.
-    private func format(messages: [ChatMessage], date: Date) -> String {
+    private func format(messages: [ChatMessage], metadata: ConversationMetadata?, date: Date) -> String {
         let dateString = Self.dateString(from: date)
         var lines: [String] = []
         lines.append("# Dia Chat \u{2014} \(dateString)")
         lines.append("")
+
+        if let metadata {
+            if let pageTitle = metadata.pageTitle {
+                lines.append("**Page Title:** \(pageTitle)")
+            }
+            if let domain = metadata.domain {
+                lines.append("**Domain:** \(domain)")
+            }
+            if !metadata.isEmpty {
+                lines.append("")
+            }
+        }
 
         for message in messages {
             switch message.role {

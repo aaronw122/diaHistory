@@ -18,5 +18,12 @@ let package = Package(
             ],
             path: "Sources/DiaHistory"
         ),
+        .testTarget(
+            name: "DiaHistoryTests",
+            dependencies: [
+                "diahistory",
+            ],
+            path: "Tests/DiaHistoryTests"
+        ),
     ]
 )
