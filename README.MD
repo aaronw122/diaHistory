@@ -14,6 +14,7 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 
 - **Real-time capture** — watches for Dia conversations using AXObserver with polling fallback
 - **Markdown & JSON output** — readable markdown by default, structured JSON with `--json`
+- **Page context metadata** — stores the active page title and domain when Dia exposes them
 - **Conversation tracking** — fingerprints conversations by content hash to detect changes and avoid duplicates
 - **Date-based organization** — files stored in `yyyy-MM-dd/` subdirectories with an auto-generated index
 - **Daemon mode** — runs continuously in the background, surviving Dia restarts
@@ -104,11 +105,35 @@ Conversations are saved to `~/Documents/DiaChats/` by default. Use `--output` to
 ```markdown
 # Dia Chat — 2026-03-27
 
+**Page Title:** bootcamp-monorepo/curriculum
+**Domain:** github.com
+
 **You:**
 Your message here
 
 **Dia:**
 Assistant response here
+```
+
+### JSON format
+
+`--json` emits a conversation envelope with metadata plus messages. The
+`metadata` key is always present; when page context is unavailable it is
+`null`:
+
+```json
+{
+  "metadata": {
+    "pageTitle": "bootcamp-monorepo/curriculum",
+    "domain": "github.com"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "text": "Your message here"
+    }
+  ]
+}
 ```
 
 ## How it works

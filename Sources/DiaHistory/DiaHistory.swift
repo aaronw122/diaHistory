@@ -123,12 +123,12 @@ struct DiaHistory: ParsableCommand {
             throw DiaHistoryError.diaNotRunning
         }
 
-        guard let groups = AccessibilityReader.extractChatGroups() else {
+        guard let capture = AccessibilityReader.extractChatCapture() else {
             Logger.error("No capturable conversation found in Dia yet.")
             throw DiaHistoryError.noChatPanel
         }
 
-        let messages = ChatParser.parse(groups: groups)
+        let messages = ChatParser.parse(groups: capture.groups)
 
         guard !messages.isEmpty else {
             Logger.warn("Conversation transcript found but no messages parsed.")
@@ -136,20 +136,20 @@ struct DiaHistory: ParsableCommand {
         }
 
         if json {
-            try outputJSON(messages: messages)
+            try outputJSON(messages: messages, metadata: capture.metadata)
         } else {
             let writer = try MarkdownWriter(outputDirectory: outputDirectory)
-            let url = try writer.write(messages: messages, date: Date())
+            let url = try writer.write(messages: messages, metadata: capture.metadata, date: Date())
             Logger.info("Captured \(messages.count) messages to \(url.lastPathComponent)")
         }
     }
 
     // MARK: - JSON output
 
-    private func outputJSON(messages: [ChatMessage]) throws {
+    private func outputJSON(messages: [ChatMessage], metadata: ConversationMetadata?) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(messages)
+        let data = try encoder.encode(ConversationExport(metadata: metadata, messages: messages))
         guard let jsonString = String(data: data, encoding: .utf8) else {
             throw ExitCode.failure
         }
