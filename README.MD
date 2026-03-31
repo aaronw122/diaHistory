@@ -53,42 +53,48 @@ cp .build/release/diahistory /usr/local/bin/
 
 ## Setup
 
-On first run, diaHistory needs macOS Accessibility permission to read Dia's UI:
+For most people, the goal is to let diaHistory start automatically on login and run in the background.
 
-1. Run `diahistory` — it will prompt you if permission is missing
-2. Open **System Settings → Privacy & Security → Accessibility**
-3. Add and enable `diahistory` (or your terminal app if running from source)
-4. Run `diahistory` again
+1. Run `diahistory` once so macOS can detect it and diaHistory can check Accessibility access.
+2. Open **System Settings → Privacy & Security → Accessibility**.
+3. Add and enable `diahistory` (or your terminal app if running from source).
+4. Run `diahistory --install` to install the LaunchAgent.
 
-## Usage
+After that, diaHistory will start automatically on login and keep capturing in the background.
+
+## Common commands
 
 ```bash
-# Run in daemon mode (watches continuously)
-diahistory
-
-# Capture current conversation and exit
-diahistory --once
-
-# Output as JSON instead of markdown
-diahistory --json
-
-# Custom output directory
-diahistory --output ~/MyChats
-
-# Auto-start on login (installs LaunchAgent)
+# Recommended: install auto-start on login
 diahistory --install
 
-# Remove auto-start
+# Capture the current conversation once and exit
+diahistory --once
+
+# Capture once as JSON instead of markdown
+diahistory --once --json
+
+# Use a different output directory
+diahistory --output ~/MyChats
+
+# Remove auto-start on login
 diahistory --uninstall
-
-# Debug: dump Dia's accessibility tree
-diahistory --debug-tree
-
-# Verbose logging
-diahistory --verbose
 ```
 
 Conversations are saved to `~/Documents/DiaChats/` by default. Use `--output` to change this.
+
+## Advanced commands
+
+```bash
+# Run manually in the foreground instead of using the LaunchAgent
+diahistory
+
+# Dump Dia's accessibility tree for debugging
+diahistory --debug-tree
+
+# Enable verbose logging
+diahistory --verbose
+```
 
 ### Output structure
 
