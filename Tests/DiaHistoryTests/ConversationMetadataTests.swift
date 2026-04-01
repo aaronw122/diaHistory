@@ -14,6 +14,11 @@ struct ConversationMetadataTests {
     }
 
     @Test
+    func extractsDomainFromDiaStyleHostAndTitle() {
+        #expect(ConversationMetadata.extractDomain(from: "en.wikipedia.org / Easter") == "en.wikipedia.org")
+    }
+
+    @Test
     func stripsWWWAndLowercasesHost() {
         #expect(ConversationMetadata.extractDomain(from: "WWW.Example.COM/path") == "example.com")
     }

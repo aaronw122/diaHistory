@@ -207,18 +207,29 @@ struct AccessibilityReader {
 
     private static func extractMetadata(from window: AXUIElement) -> ConversationMetadata? {
         let pageTitle = normalizeString(attribute(.title, of: window) as? String)
+        Logger.debug("Metadata: window title candidate = \(pageTitle ?? "<nil>")")
 
         var domainCandidates: [String] = []
         if let document = attribute(named: kAXDocumentAttribute as String, of: window) as? String {
             domainCandidates.append(document)
+            Logger.debug("Metadata: AXDocument candidate = \(document)")
         }
         if let url = attribute(named: "AXURL", of: window) as? String {
             domainCandidates.append(url)
+            Logger.debug("Metadata: AXURL candidate = \(url)")
         }
-        domainCandidates.append(contentsOf: collectDomainCandidateStrings(in: window))
+        let scannedCandidates = collectDomainCandidateStrings(in: window)
+        domainCandidates.append(contentsOf: scannedCandidates)
+        if !scannedCandidates.isEmpty {
+            Logger.debug("Metadata: scanned candidates = \(scannedCandidates.joined(separator: " | "))")
+        }
 
         let domain = domainCandidates.compactMap(ConversationMetadata.extractDomain(from:)).first
+        Logger.debug("Metadata: resolved domain = \(domain ?? "<nil>")")
         let metadata = ConversationMetadata(pageTitle: pageTitle, domain: domain)
+        if metadata.isEmpty {
+            Logger.debug("Metadata: no usable page context extracted")
+        }
         return metadata.isEmpty ? nil : metadata
     }
 
@@ -256,11 +267,16 @@ struct AccessibilityReader {
                         hintText.contains("address") ||
                         hintText.contains("location") ||
                         hintText.contains("url")
+                    let looksLikeDomainContext =
+                        role == kAXTextAreaRole as String &&
+                        value?.count ?? 0 <= 256 &&
+                        ConversationMetadata.extractDomain(from: value) != nil
 
                     if let value,
                        looksLikeAddressField,
                        ConversationMetadata.extractDomain(from: value) != nil {
                         candidates.append(value)
+                        Logger.debug("Metadata: accepted address-like candidate = \(value)")
                         if candidates.count >= 25 {
                             return candidates
                         }
@@ -270,6 +286,13 @@ struct AccessibilityReader {
                               (value.hasPrefix("http://") || value.hasPrefix("https://")),
                               ConversationMetadata.extractDomain(from: value) != nil {
                         candidates.append(value)
+                        Logger.debug("Metadata: accepted URL candidate = \(value)")
+                        if candidates.count >= 25 {
+                            return candidates
+                        }
+                    } else if let value, looksLikeDomainContext {
+                        candidates.append(value)
+                        Logger.debug("Metadata: accepted domain-context candidate = \(value)")
                         if candidates.count >= 25 {
                             return candidates
                         }

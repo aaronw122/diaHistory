@@ -2,11 +2,17 @@ import Foundation
 
 /// Centralized logging to stderr so stdout stays clean for structured output.
 enum Logger {
+    private(set) static var isVerboseEnabled = false
+
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
         return f
     }()
+
+    static func setVerbose(_ enabled: Bool) {
+        isVerboseEnabled = enabled
+    }
 
     /// Log an informational message to stderr.
     static func info(_ message: String) {
@@ -21,6 +27,12 @@ enum Logger {
     /// Log an error to stderr.
     static func error(_ message: String) {
         write("ERROR", message)
+    }
+
+    /// Log a debug message only when verbose logging is enabled.
+    static func debug(_ message: String) {
+        guard isVerboseEnabled else { return }
+        write("DEBUG", message)
     }
 
     private static func write(_ level: String, _ message: String) {

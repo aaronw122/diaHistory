@@ -45,7 +45,7 @@ struct ConversationMetadata: Codable, Equatable {
             return normalizeHost(host)
         }
 
-        let pattern = #"(?:https?:\/\/)?(?:www\.)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[\/:\?#]|$)"#
+        let pattern = #"(?:https?:\/\/)?(?:www\.)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})(?=$|[\s\/:\?#])"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return nil
         }

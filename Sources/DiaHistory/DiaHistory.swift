@@ -40,6 +40,8 @@ struct DiaHistory: ParsableCommand {
     // MARK: - Run
 
     func run() throws {
+        Logger.setVerbose(verbose)
+
         // Handle install/uninstall before anything else
         if install {
             let binaryPath = ProcessInfo.processInfo.arguments[0]
