@@ -43,11 +43,8 @@ struct AccessibilityReader {
         guard let pid = findDiaProcess() else { return nil }
 
         let appElement = AXUIElementCreateApplication(pid)
-
-        guard let windows = attribute(.windows, of: appElement) as? [AXUIElement],
-              !windows.isEmpty else {
-            return nil
-        }
+        let windows = discoverWindows(appElement)
+        guard !windows.isEmpty else { return nil }
 
         for window in windows {
             if let capture = capture(in: window) {
@@ -69,11 +66,7 @@ struct AccessibilityReader {
         guard let pid = findDiaProcess() else { return [] }
 
         let appElement = AXUIElementCreateApplication(pid)
-
-        guard let windows = attribute(.windows, of: appElement) as? [AXUIElement],
-              !windows.isEmpty else {
-            return []
-        }
+        let windows = discoverWindows(appElement)
 
         var captures: [CapturedConversation] = []
         for window in windows {
@@ -88,6 +81,38 @@ struct AccessibilityReader {
     /// window that has a populated transcript. Empty array if none are found.
     static func extractAllChatGroups() -> [[AXUIElement]] {
         extractAllChatCaptures().map(\.groups)
+    }
+
+    // MARK: - Window Discovery
+
+    /// Discover windows from Dia's AXApplication element.
+    /// Prefers the standard AXWindows attribute but falls back to
+    /// AXMainWindow / AXFocusedWindow when AXWindows is empty
+    /// (a known Chromium-based browser quirk in some Dia versions).
+    static func discoverWindows(_ appElement: AXUIElement) -> [AXUIElement] {
+        if let windows = attribute(.windows, of: appElement) as? [AXUIElement], !windows.isEmpty {
+            return windows
+        }
+
+        // Fallback: collect unique windows from AXMainWindow and AXFocusedWindow
+        var windows: [AXUIElement] = []
+        var seen = Set<UInt>()
+        for attr: NSAccessibility.Attribute in [.mainWindow, .focusedWindow] {
+            guard let raw = attribute(attr, of: appElement) else { continue }
+            // AXMainWindow/AXFocusedWindow always return AXUIElement when non-nil.
+            // Swift's `as?` doesn't work for CF type bridges, so force cast is correct here.
+            let el = raw as! AXUIElement
+            let hash = CFHash(el)
+            if seen.insert(hash).inserted {
+                windows.append(el)
+            }
+        }
+
+        if !windows.isEmpty {
+            Logger.debug("AXWindows empty — using AXMainWindow/AXFocusedWindow fallback (\(windows.count) window(s))")
+        }
+
+        return windows
     }
 
     // MARK: - Tree Walking

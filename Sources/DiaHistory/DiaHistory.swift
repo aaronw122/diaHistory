@@ -161,23 +161,55 @@ struct DiaHistory: ParsableCommand {
 
         print("Found Dia at pid \(pid)")
         let appElement = AXUIElementCreateApplication(pid)
-        dumpElement(appElement, depth: 0, maxDepth: 6)
+
+        // Window discovery diagnostics
+        let axWindows = AccessibilityReader.attribute(.windows, of: appElement) as? [AXUIElement] ?? []
+        print("AXWindows: \(axWindows.count) window(s)")
+
+        if let mainWin = AccessibilityReader.attribute(.mainWindow, of: appElement) {
+            let el = mainWin as! AXUIElement
+            let title = AccessibilityReader.attribute(.title, of: el) as? String ?? ""
+            print("AXMainWindow: \"\(title)\"")
+        } else {
+            print("AXMainWindow: nil")
+        }
+
+        // Use the same discovery logic as the capture path
+        let windows = AccessibilityReader.discoverWindows(appElement)
+        print("Discovered \(windows.count) window(s)")
+
+        for (i, win) in windows.enumerated() {
+            let title = AccessibilityReader.attribute(.title, of: win) as? String ?? ""
+            print("\n=== Window \(i): \"\(title)\" ===")
+            dumpElement(win, depth: 0, maxDepth: 10)
+        }
     }
 
     private func dumpElement(_ element: AXUIElement, depth: Int, maxDepth: Int) {
-        guard depth <= maxDepth else { return }
+        guard depth <= maxDepth else {
+            let indent = String(repeating: "  ", count: depth)
+            print("\(indent)[... max depth reached]")
+            return
+        }
         let indent = String(repeating: "  ", count: depth)
 
         let role = AccessibilityReader.attribute(.role, of: element) as? String ?? "?"
         let desc = AccessibilityReader.attribute(.description, of: element) as? String
         let value = AccessibilityReader.attribute(.value, of: element)
         let title = AccessibilityReader.attribute(.title, of: element) as? String
+        let subrole = AccessibilityReader.attribute(.subrole, of: element) as? String
 
         var line = "\(indent)[\(role)]"
-        if let title = title, !title.isEmpty { line += " title=\"\(title.prefix(60))\"" }
-        if let desc = desc, !desc.isEmpty { line += " desc=\"\(desc.prefix(60))\"" }
-        if let value = value as? String, !value.isEmpty { line += " value=\"\(value.prefix(80))\"" }
+        if let subrole = subrole, !subrole.isEmpty { line += " subrole=\(subrole)" }
+        if let title = title, !title.isEmpty { line += " title=\"\(title.prefix(80))\"" }
+        if let desc = desc, !desc.isEmpty { line += " desc=\"\(desc.prefix(80))\"" }
+        if let value = value as? String, !value.isEmpty { line += " value=\"\(value.prefix(120))\"" }
         print(line)
+
+        // Skip menus — they're huge and not useful for chat debugging
+        if role == kAXMenuBarRole as String || role == kAXMenuRole as String {
+            return
+        }
 
         guard let children = AccessibilityReader.attribute(.children, of: element) as? [AXUIElement] else {
             return
@@ -233,7 +265,7 @@ struct DiaHistory: ParsableCommand {
         }
         signal(SIGTERM) { _ in
             Logger.info("Received SIGTERM — shutting down.")
-            Darwin.exit(0)
+            Darwin.exit(1)
         }
     }
 }
