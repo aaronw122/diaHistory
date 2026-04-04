@@ -29,21 +29,20 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 ## Installation
 
 1. install via homebrew `brew install aaronw122/tap/diahistory`
-2. Run `diahistory` once so macOS can detect it and diaHistory can check Accessibility access.
-3. Open **System Settings → Privacy & Security → Accessibility**.
-4. Add and enable `diahistory` (or your terminal app if running from source).
-5. Run `diahistory --install` to install the LaunchAgent.
+2. Run `diahistory --install`.
+3. If prompted, enable `diahistory` in **System Settings → Privacy & Security → Accessibility**.
+4. Wait for `diahistory --install` to finish installing the LaunchAgent.
 
-After that, diaHistory will start automatically on login and keep capturing in the background.
+After that, diaHistory will start automatically on login and keep capturing in the background. You do not need to reinstall after granting permission.
 
 ## Other commands
 
 ```bash
-# Use a different output directory
-diahistory --output ~/MyChats
-
-# Persist a custom output directory in the LaunchAgent
+# Install with a custom output directory
 diahistory --output ~/MyChats --install
+
+# Use a different output directory for a foreground run
+diahistory --output ~/MyChats
 ```
 
 Conversations are saved to `~/Documents/DiaChats/` by default. Use `--output` to change this.

@@ -42,16 +42,13 @@ struct DiaHistory: ParsableCommand {
     func run() throws {
         Logger.setVerbose(verbose)
 
-        // Handle install/uninstall before anything else
-        if install {
-            let binaryPath = ProcessInfo.processInfo.arguments[0]
-            let resolvedOutput = NSString(string: output).expandingTildeInPath
-            try LaunchAgent.install(binaryPath: binaryPath, outputDirectory: resolvedOutput)
+        if uninstall {
+            try LaunchAgent.uninstall()
             return
         }
 
-        if uninstall {
-            try LaunchAgent.uninstall()
+        if install {
+            try runInstall()
             return
         }
 
@@ -65,41 +62,28 @@ struct DiaHistory: ParsableCommand {
 
         Logger.info("diaHistory starting...")
 
-        // Check accessibility permission before anything else
-        if !PermissionChecker.checkAccessibility(prompt: false) {
-            if once {
-                _ = PermissionChecker.checkAccessibility(prompt: true)
-                PermissionChecker.printPermissionInstructions()
-                throw DiaHistoryError.noAccessibilityPermission
-            } else {
-                PermissionChecker.waitForPermission()
-            }
-        }
-
-        Logger.info("Accessibility permission confirmed.")
-
-        if !PermissionChecker.isCodesigned() {
-            Logger.warn("Binary is not codesigned. Accessibility permission may not persist across rebuilds.")
-            Logger.warn("  Run 'make build' to codesign, or use: codesign -s - .build/debug/diahistory")
-        }
-
-        // Create output directory early to fail fast
-        do {
-            try FileManager.default.createDirectory(
-                at: outputDir,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            throw DiaHistoryError.fileWriteError(
-                "Cannot create output directory '\(outputDir.path)': \(error.localizedDescription)"
-            )
-        }
+        try ensureAccessibilityPermission(waitForGrant: !once)
+        warnIfBinaryIsNotCodesigned()
+        try ensureOutputDirectoryExists(outputDir)
 
         if once {
             try runOnce(outputDirectory: outputDir)
         } else {
             try runDaemon(outputDirectory: outputDir)
         }
+    }
+
+    private func runInstall() throws {
+        let outputDir = resolvedOutputDirectory
+
+        Logger.info("Preparing LaunchAgent installation...")
+
+        try ensureAccessibilityPermission(waitForGrant: true)
+        warnIfBinaryIsNotCodesigned()
+        try ensureOutputDirectoryExists(outputDir)
+
+        let binaryPath = ProcessInfo.processInfo.arguments[0]
+        try LaunchAgent.install(binaryPath: binaryPath, outputDirectory: outputDir.path)
     }
 
     // MARK: - Daemon mode
@@ -204,6 +188,43 @@ struct DiaHistory: ParsableCommand {
     }
 
     // MARK: - Signal Handling
+
+    private func ensureAccessibilityPermission(waitForGrant: Bool) throws {
+        guard !PermissionChecker.checkAccessibility(prompt: false) else {
+            Logger.info("Accessibility permission confirmed.")
+            return
+        }
+
+        if waitForGrant {
+            PermissionChecker.waitForPermission()
+        } else {
+            _ = PermissionChecker.checkAccessibility(prompt: true)
+            PermissionChecker.printPermissionInstructions()
+            throw DiaHistoryError.noAccessibilityPermission
+        }
+
+        Logger.info("Accessibility permission confirmed.")
+    }
+
+    private func warnIfBinaryIsNotCodesigned() {
+        if !PermissionChecker.isCodesigned() {
+            Logger.warn("Binary is not codesigned. Accessibility permission may not persist across rebuilds.")
+            Logger.warn("  Run 'make build' to codesign, or use: codesign -s - .build/debug/diahistory")
+        }
+    }
+
+    private func ensureOutputDirectoryExists(_ outputDir: URL) throws {
+        do {
+            try FileManager.default.createDirectory(
+                at: outputDir,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw DiaHistoryError.fileWriteError(
+                "Cannot create output directory '\(outputDir.path)': \(error.localizedDescription)"
+            )
+        }
+    }
 
     private func installSignalHandlers() {
         signal(SIGINT) { _ in
