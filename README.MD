@@ -40,20 +40,6 @@ diahistory --install
 Homebrew-installed binary so the LaunchAgent points at Homebrew's stable
 install path.
 
-### Build from source
-
-```bash
-git clone https://github.com/aaronw122/diaHistory.git
-cd diaHistory
-make build
-```
-
-The binary will be at `.build/release/diahistory`. Move it somewhere on your `$PATH`:
-
-```bash
-cp .build/release/diahistory /usr/local/bin/
-```
-
 ## Setup
 
 1. Run `diahistory` once so macOS can detect it and diaHistory can check Accessibility access.
