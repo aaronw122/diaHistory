@@ -33,7 +33,7 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 3. If prompted, enable `diahistory` in **System Settings → Privacy & Security → Accessibility**.
 4. Wait for `diahistory --install` to finish installing the LaunchAgent.
 
-After that, diaHistory will start automatically on login and keep capturing in the background. You do not need to reinstall after granting permission.
+After that, diaHistory will start automatically on login and keep capturing in the background.
 
 ## Other commands
 
