@@ -34,6 +34,10 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 brew install aaronw122/tap/diahistory
 ```
 
+After installing with Homebrew, run `diahistory --install` from the
+Homebrew-installed binary so the LaunchAgent points at Homebrew's stable
+install path.
+
 ### Build from source
 
 ```bash
@@ -62,9 +66,15 @@ After that, diaHistory will start automatically on login and keep capturing in t
 ```bash
 # Use a different output directory
 diahistory --output ~/MyChats
+
+# Persist a custom output directory in the LaunchAgent
+diahistory --output ~/MyChats --install
 ```
 
 Conversations are saved to `~/Documents/DiaChats/` by default. Use `--output` to change this.
+When you use `--install`, the current output directory is written into the
+LaunchAgent plist. If you want to change the background agent's destination
+later, rerun `diahistory --output <path> --install`.
 
 ## Advanced commands
 
