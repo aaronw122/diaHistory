@@ -34,7 +34,9 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 brew install aaronw122/tap/diahistory
 ```
 
-After installing with Homebrew, run `diahistory --install` from the
+```bash
+diahistory --install
+```
 Homebrew-installed binary so the LaunchAgent points at Homebrew's stable
 install path.
 
