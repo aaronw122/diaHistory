@@ -28,24 +28,11 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 
 ## Installation
 
-### Homebrew (recommended)
-
-```bash
-brew install aaronw122/tap/diahistory
-```
-
-```bash
-diahistory --install
-```
-Homebrew-installed binary so the LaunchAgent points at Homebrew's stable
-install path.
-
-## Setup
-
-1. Run `diahistory` once so macOS can detect it and diaHistory can check Accessibility access.
-2. Open **System Settings → Privacy & Security → Accessibility**.
-3. Add and enable `diahistory` (or your terminal app if running from source).
-4. Run `diahistory --install` to install the LaunchAgent.
+1. install via homebrew `brew install aaronw122/tap/diahistory`
+2. Run `diahistory` once so macOS can detect it and diaHistory can check Accessibility access.
+3. Open **System Settings → Privacy & Security → Accessibility**.
+4. Add and enable `diahistory` (or your terminal app if running from source).
+5. Run `diahistory --install` to install the LaunchAgent.
 
 After that, diaHistory will start automatically on login and keep capturing in the background.
 
