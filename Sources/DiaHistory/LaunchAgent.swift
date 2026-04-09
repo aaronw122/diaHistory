@@ -23,6 +23,10 @@ struct LaunchAgent {
         try plistContent.write(to: plistPath, atomically: true, encoding: .utf8)
         print("Wrote plist to \(plistPath.path)")
 
+        // Unload any existing agent first (ensures a fresh start if permission
+        // was granted after a previous launch)
+        try? runLaunchctl(["unload", plistPath.path])
+
         // Load the agent
         try runLaunchctl(["load", plistPath.path])
         print("LaunchAgent installed and loaded successfully.")

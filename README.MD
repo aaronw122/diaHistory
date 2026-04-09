@@ -7,7 +7,7 @@ A macOS CLI tool that automatically captures and archives your [Dia](https://dia
 Dia conversations are ephemeral by default — once you close a tab, the context is gone. diaHistory gives you a persistent, searchable archive of everything you've discussed. With your conversations saved as plain markdown files, you can:
 
 - **Build Anki cards** from concepts and patterns that came up in conversation
-- **Revisit old insights** — that breakthrough explanation or learning session you half-remember is now grep-able
+- **Revisit old insights** — that learning session you half-remember is now grep-able
 - **Track your learning over time** — work with Claude code and other tools to spot moments for growth
 
 ## Features
@@ -28,10 +28,10 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 
 ## Installation
 
-1. install via homebrew `brew install aaronw122/tap/diahistory`
-2. Run `diahistory --install`.
-3. If prompted, enable `diahistory` in **System Settings → Privacy & Security → Accessibility**.
-4. Wait for `diahistory --install` to finish installing the LaunchAgent.
+1. Install via Homebrew: `brew install aaronw122/tap/diahistory`
+2. Run `diahistory --install`
+3. If prompted, enable `diahistory` in **System Settings → Privacy & Security → Accessibility**
+4. Once permission is granted, run `diahistory --install` again to restart the daemon with the new permission
 
 After that, diaHistory will start automatically on login and keep capturing in the background.
 
