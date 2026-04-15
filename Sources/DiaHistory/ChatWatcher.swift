@@ -88,7 +88,7 @@ class ChatWatcher {
             usingPollingFallback = true
         }
 
-        let captures = AccessibilityReader.extractAllChatCaptures()
+        let captures = AccessibilityReader.getAllChatCaptures()
         if !captures.isEmpty {
             log("Found \(captures.count) populated conversation transcript(s)")
             for capture in captures {
@@ -109,7 +109,7 @@ class ChatWatcher {
             return
         }
 
-        let captures = AccessibilityReader.extractAllChatCaptures()
+        let captures = AccessibilityReader.getAllChatCaptures()
         if !captures.isEmpty {
             log("Conversation transcript detected (\(captures.count) panel(s))")
             for capture in captures {
@@ -128,7 +128,7 @@ class ChatWatcher {
             return
         }
 
-        let captures = AccessibilityReader.extractAllChatCaptures()
+        let captures = AccessibilityReader.getAllChatCaptures()
         if captures.isEmpty {
             transition(to: .noChatOpen)
             return
@@ -152,7 +152,7 @@ class ChatWatcher {
             transition(to: .diaAbsent)
         } else {
             // Process all panels — if none exist, go to noChatOpen
-            let captures = AccessibilityReader.extractAllChatCaptures()
+            let captures = AccessibilityReader.getAllChatCaptures()
             if captures.isEmpty {
                 transition(to: .noChatOpen)
             } else {
@@ -276,7 +276,7 @@ class ChatWatcher {
     /// Called from the AXObserver C callback — re-extract and diff.
     fileprivate func handleAXNotification() {
         autoreleasepool {
-            let captures = AccessibilityReader.extractAllChatCaptures()
+            let captures = AccessibilityReader.getAllChatCaptures()
 
             if captures.isEmpty {
                 if state == .watching {

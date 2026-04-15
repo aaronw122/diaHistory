@@ -109,7 +109,7 @@ struct DiaHistory: ParsableCommand {
             throw DiaHistoryError.diaNotRunning
         }
 
-        guard let capture = AccessibilityReader.extractChatCapture() else {
+        guard let capture = AccessibilityReader.getChatCapture() else {
             Logger.error("No capturable conversation found in Dia yet.")
             throw DiaHistoryError.noChatPanel
         }

@@ -39,7 +39,7 @@ struct AccessibilityReader {
     }
 
     /// Extract transcript groups plus page metadata from the first populated window.
-    static func extractChatCapture() -> CapturedConversation? {
+    static func getChatCapture() -> CapturedConversation? {
         guard let pid = findDiaProcess() else { return nil }
 
         let appElement = AXUIElementCreateApplication(pid)
@@ -57,12 +57,12 @@ struct AccessibilityReader {
 
     /// Extract transcript AXGroup elements from Dia's accessibility tree.
     /// Returns nil if Dia isn't running or no populated transcript is found.
-    static func extractChatGroups() -> [AXUIElement]? {
-        extractChatCapture()?.groups
+    static func getChatGroups() -> [AXUIElement]? {
+        getChatCapture()?.groups
     }
 
     /// Extract transcript groups plus page metadata from all populated windows.
-    static func extractAllChatCaptures() -> [CapturedConversation] {
+    static func getAllChatCaptures() -> [CapturedConversation] {
         guard let pid = findDiaProcess() else { return [] }
 
         let appElement = AXUIElementCreateApplication(pid)
@@ -79,8 +79,8 @@ struct AccessibilityReader {
 
     /// Extract transcript groups from ALL windows. Returns one array of groups per
     /// window that has a populated transcript. Empty array if none are found.
-    static func extractAllChatGroups() -> [[AXUIElement]] {
-        extractAllChatCaptures().map(\.groups)
+    static func getAllChatGroups() -> [[AXUIElement]] {
+        getAllChatCaptures().map(\.groups)
     }
 
     // MARK: - Window Discovery
