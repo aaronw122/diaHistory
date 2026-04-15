@@ -19,6 +19,7 @@ struct ConversationRecord: Codable {
     var contentHash: String?  // Optional for backwards compat with old state files
     var metadata: ConversationMetadata?
     let createdAt: Date
+    var lastUpdatedAt: Date?  // nil for records from older state files
 }
 
 // MARK: - Tracking Result
@@ -83,6 +84,7 @@ class ConversationTracker {
                 state.conversations[fingerprint]?.lastMessageCount = messages.count
                 state.conversations[fingerprint]?.contentHash = newHash
                 state.conversations[fingerprint]?.metadata = mergedMetadata
+                state.conversations[fingerprint]?.lastUpdatedAt = Date()
                 return .existingConversation(
                     filePath: filePath,
                     createdAt: record.createdAt,
@@ -112,6 +114,7 @@ class ConversationTracker {
 
         state.conversations[fingerprint] = record
         state.activeFingerprint = fingerprint
+        state.conversations[fingerprint]?.lastUpdatedAt = date
 
         let filePath = outputDirectory.appendingPathComponent(filename)
         return .newConversation(
@@ -121,8 +124,26 @@ class ConversationTracker {
         )
     }
 
+    /// Remove conversations inactive for more than 1 day.
+    /// The markdown files on disk are the source of truth — pruning here
+    /// only affects the in-memory tracking dict and its serialized form.
+    func pruneStaleConversations() {
+        let cutoff = Date().addingTimeInterval(-86400)  // 24 hours
+        let before = state.conversations.count
+        state.conversations = state.conversations.filter { key, record in
+            if key == state.activeFingerprint { return true }
+            let lastActive = record.lastUpdatedAt ?? record.createdAt
+            return lastActive > cutoff
+        }
+        let pruned = before - state.conversations.count
+        if pruned > 0 {
+            Logger.info("Pruned \(pruned) stale conversation(s) from state")
+        }
+    }
+
     /// Persist state to disk atomically (write to temp, then rename).
     func save() throws {
+        pruneStaleConversations()
         let stateURL = outputDirectory.appendingPathComponent(Self.stateFilename)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

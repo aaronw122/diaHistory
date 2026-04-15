@@ -37,6 +37,11 @@ struct ConversationMetadata: Codable, Equatable {
         }
     }
 
+    private static let domainRegex: NSRegularExpression? = {
+        let pattern = #"(?:https?:\/\/)?(?:www\.)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})(?=$|[\s\/:\?#])"#
+        return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }()
+
     static func extractDomain(from candidate: String?) -> String? {
         guard let candidate = normalize(candidate) else { return nil }
 
@@ -45,10 +50,7 @@ struct ConversationMetadata: Codable, Equatable {
             return normalizeHost(host)
         }
 
-        let pattern = #"(?:https?:\/\/)?(?:www\.)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})(?=$|[\s\/:\?#])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return nil
-        }
+        guard let regex = Self.domainRegex else { return nil }
 
         let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
         guard let match = regex.firstMatch(in: candidate, options: [], range: range),

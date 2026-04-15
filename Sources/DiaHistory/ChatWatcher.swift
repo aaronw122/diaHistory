@@ -40,33 +40,35 @@ class ChatWatcher {
         log("ChatWatcher starting, output: \(outputDirectory.path)")
 
         while true {
-            let previousState = state
+            autoreleasepool {
+                let previousState = state
 
-            switch state {
-            case .diaAbsent:
-                pollForDia()
+                switch state {
+                case .diaAbsent:
+                    pollForDia()
 
-            case .noChatOpen:
-                // AXObserver should be active, but check liveness and
-                // transcript availability as a safety net.
-                checkNoChatOpen()
+                case .noChatOpen:
+                    // AXObserver should be active, but check liveness and
+                    // transcript availability as a safety net.
+                    checkNoChatOpen()
 
-            case .watching:
-                if usingPollingFallback {
-                    pollForChanges()
-                } else {
-                    verifyDiaStillRunning()
+                case .watching:
+                    if usingPollingFallback {
+                        pollForChanges()
+                    } else {
+                        verifyDiaStillRunning()
+                    }
                 }
-            }
 
-            // Skip sleep if state just changed — act on the new state immediately
-            guard state == previousState else { continue }
+                // Skip sleep if state just changed — act on the new state immediately
+                guard state == previousState else { return }
 
-            switch state {
-            case .diaAbsent:
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 30))
-            case .noChatOpen, .watching:
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 5))
+                switch state {
+                case .diaAbsent:
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 30))
+                case .noChatOpen, .watching:
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 5))
+                }
             }
         }
     }
@@ -273,25 +275,27 @@ class ChatWatcher {
 
     /// Called from the AXObserver C callback — re-extract and diff.
     fileprivate func handleAXNotification() {
-        let captures = AccessibilityReader.extractAllChatCaptures()
+        autoreleasepool {
+            let captures = AccessibilityReader.extractAllChatCaptures()
 
-        if captures.isEmpty {
-            if state == .watching {
-                transition(to: .noChatOpen)
+            if captures.isEmpty {
+                if state == .watching {
+                    transition(to: .noChatOpen)
+                }
+                return
             }
-            return
-        }
 
-        if state == .noChatOpen {
-            log("Conversation transcript detected via AXObserver (\(captures.count) panel(s))")
-        }
+            if state == .noChatOpen {
+                log("Conversation transcript detected via AXObserver (\(captures.count) panel(s))")
+            }
 
-        for capture in captures {
-            handleCapture(capture)
-        }
+            for capture in captures {
+                handleCapture(capture)
+            }
 
-        if state == .noChatOpen {
-            transition(to: .watching)
+            if state == .noChatOpen {
+                transition(to: .watching)
+            }
         }
     }
 
