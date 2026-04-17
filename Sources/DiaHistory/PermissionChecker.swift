@@ -1,4 +1,5 @@
 import ApplicationServices
+import Cocoa
 import Foundation
 
 /// Checks macOS Accessibility (TCC) permission and codesigning status.
@@ -20,28 +21,51 @@ struct PermissionChecker {
         return AXIsProcessTrusted()
     }
 
+    /// Open System Settings to the Accessibility pane and reveal the binary in Finder
+    /// so the user can drag it in.
+    static func openAccessibilitySettingsAndRevealBinary() {
+        // Open System Settings → Accessibility
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+
+        // Resolve the real binary path (follow symlinks)
+        let binaryPath = ProcessInfo.processInfo.arguments[0]
+        let resolvedPath = (binaryPath as NSString).resolvingSymlinksInPath
+        let binaryURL = URL(fileURLWithPath: resolvedPath)
+
+        // Brief delay so Settings opens first
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            NSWorkspace.shared.activateFileViewerSelecting([binaryURL])
+        }
+    }
+
     /// Print user-friendly instructions for granting permissions to stderr.
     static func printPermissionInstructions() {
+        let binaryPath = ProcessInfo.processInfo.arguments[0]
+        let resolvedPath = (binaryPath as NSString).resolvingSymlinksInPath
+
         Logger.warn("Accessibility permission required.")
         Logger.warn("  diaHistory needs Accessibility permission to read Dia's chat interface.")
         Logger.warn("")
-        Logger.warn("  To grant permission:")
-        Logger.warn("    1. Open System Settings -> Privacy & Security -> Accessibility")
-        Logger.warn("    2. Click the + button and add diaHistory (or toggle it on if already listed)")
-        Logger.warn("    3. Restart diaHistory")
+        Logger.warn("  System Settings and the diahistory binary have been opened for you.")
+        Logger.warn("  Drag the highlighted diahistory file into the Accessibility list,")
+        Logger.warn("  or click + and navigate to:")
+        Logger.warn("    \(resolvedPath)")
         Logger.warn("")
-        Logger.warn("  If you just granted permission and it's not working, try:")
-        Logger.warn("    - Removing and re-adding diaHistory in the Accessibility list")
-        Logger.warn("    - Rebuilding with 'make build' (codesigning ensures permission persists)")
+        Logger.warn("  Then toggle it ON. diaHistory will detect the permission automatically.")
     }
 
     /// Block until accessibility permission is granted, checking every `interval` seconds.
-    /// Triggers the system prompt dialog on first check, then polls silently.
+    /// Opens System Settings and reveals the binary for the user to add.
     static func waitForPermission(interval: TimeInterval = 5.0) {
         guard !checkAccessibility(prompt: false) else { return }
 
-        // Trigger the system prompt dialog
+        // Try the system prompt first (works on some macOS versions)
         _ = checkAccessibility(prompt: true)
+
+        // Also open Settings and reveal binary as a fallback
+        openAccessibilitySettingsAndRevealBinary()
         printPermissionInstructions()
         Logger.info("Waiting for accessibility permission to be granted...")
 
