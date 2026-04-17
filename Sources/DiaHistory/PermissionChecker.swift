@@ -21,18 +21,21 @@ struct PermissionChecker {
         return AXIsProcessTrusted()
     }
 
-    /// Open System Settings to the Accessibility pane and reveal the binary in Finder
-    /// so the user can drag it in.
+    /// The stable binary path used for TCC identity.
+    static var stableBinaryPath: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/diahistory/bin/diahistory")
+    }
+
+    /// Open System Settings to the Accessibility pane and reveal the stable binary
+    /// in Finder so the user can drag it in.
     static func openAccessibilitySettingsAndRevealBinary() {
         // Open System Settings → Accessibility
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
 
-        // Resolve the real binary path (follow symlinks)
-        let binaryPath = ProcessInfo.processInfo.arguments[0]
-        let resolvedPath = (binaryPath as NSString).resolvingSymlinksInPath
-        let binaryURL = URL(fileURLWithPath: resolvedPath)
+        let binaryURL = stableBinaryPath
 
         // Brief delay so Settings opens first
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -42,8 +45,7 @@ struct PermissionChecker {
 
     /// Print user-friendly instructions for granting permissions to stderr.
     static func printPermissionInstructions() {
-        let binaryPath = ProcessInfo.processInfo.arguments[0]
-        let resolvedPath = (binaryPath as NSString).resolvingSymlinksInPath
+        let path = stableBinaryPath.path
 
         Logger.warn("Accessibility permission required.")
         Logger.warn("  diaHistory needs Accessibility permission to read Dia's chat interface.")
@@ -51,7 +53,7 @@ struct PermissionChecker {
         Logger.warn("  System Settings and the diahistory binary have been opened for you.")
         Logger.warn("  Drag the highlighted diahistory file into the Accessibility list,")
         Logger.warn("  or click + and navigate to:")
-        Logger.warn("    \(resolvedPath)")
+        Logger.warn("    \(path)")
         Logger.warn("")
         Logger.warn("  Then toggle it ON. diaHistory will detect the permission automatically.")
     }

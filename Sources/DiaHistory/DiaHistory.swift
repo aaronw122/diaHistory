@@ -73,17 +73,66 @@ struct DiaHistory: ParsableCommand {
         }
     }
 
+    /// Stable install location — survives Homebrew upgrades and gives TCC a
+    /// consistent binary identity for Accessibility permission.
+    private static let stableBinDir: URL = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/diahistory/bin")
+    }()
+
+    private static var stableBinaryPath: URL {
+        stableBinDir.appendingPathComponent("diahistory")
+    }
+
     private func runInstall() throws {
         let outputDir = resolvedOutputDirectory
 
         Logger.info("Preparing LaunchAgent installation...")
 
+        // 1. Copy binary to stable location
+        let stablePath = try installToStablePath()
+        Logger.info("Binary installed to \(stablePath)")
+
+        // 2. Request permission — the stable binary is what TCC will see
         try ensureAccessibilityPermission(waitForGrant: true)
-        warnIfBinaryIsNotCodesigned()
         try ensureOutputDirectoryExists(outputDir)
 
-        let binaryPath = ProcessInfo.processInfo.arguments[0]
-        try LaunchAgent.install(binaryPath: binaryPath, outputDirectory: outputDir.path)
+        // 3. Install LaunchAgent pointing to the stable binary
+        try LaunchAgent.install(binaryPath: stablePath, outputDirectory: outputDir.path)
+    }
+
+    /// Copy the current binary to a stable user-owned location.
+    /// Returns the path to the stable binary.
+    private func installToStablePath() throws -> String {
+        let fm = FileManager.default
+        let stableDir = Self.stableBinDir
+        let stableBinary = Self.stableBinaryPath
+
+        // Create directory
+        try fm.createDirectory(at: stableDir, withIntermediateDirectories: true)
+
+        // Resolve the current binary's real path (follow symlinks)
+        let invocationPath = ProcessInfo.processInfo.arguments[0]
+        let resolvedPath = (invocationPath as NSString).resolvingSymlinksInPath
+
+        // Remove old binary if it exists
+        if fm.fileExists(atPath: stableBinary.path) {
+            try fm.removeItem(at: stableBinary)
+        }
+
+        // Copy
+        try fm.copyItem(atPath: resolvedPath, toPath: stableBinary.path)
+
+        // Codesign the stable copy
+        let codesign = Process()
+        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        codesign.arguments = ["--force", "--sign", "-", stableBinary.path]
+        codesign.standardOutput = FileHandle.nullDevice
+        codesign.standardError = FileHandle.nullDevice
+        try codesign.run()
+        codesign.waitUntilExit()
+
+        return stableBinary.path
     }
 
     // MARK: - Daemon mode
