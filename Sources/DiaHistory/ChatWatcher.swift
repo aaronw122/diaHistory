@@ -2,18 +2,27 @@ import ApplicationServices
 import Cocoa
 import Foundation
 
-/// Daemon loop that monitors Dia for new chat messages once a populated
-/// transcript exists.
+/// Daemon loop that monitors Dia for new chat messages.
 ///
-/// Primary mechanism: AXObserver (event-driven) for change detection.
-/// Falls back to polling for process/transcript discovery and when
-/// AXObserver registration fails.
+/// Two-phase design:
+/// - Discovery poll (15s): finds Dia's PID and populated chat panels
+/// - Per-panel AXObserver: event-driven change detection on each panel's AXList
+///
+/// The discovery poll runs continuously to detect new panels, closed panels,
+/// and Dia quitting. Per-panel observers provide instant message detection
+/// between polls.
 class ChatWatcher {
 
     enum State {
         case diaAbsent    // Dia process not found — poll every 30s
-        case noChatOpen   // Dia running, no populated transcript — AXObserver + safety poll
-        case watching     // AXObserver active (or polling fallback at 5s)
+        case discovering  // Dia running — poll for panels every 15s, observers on found panels
+    }
+
+    /// A chat panel being actively observed for changes.
+    private struct TrackedPanel {
+        let handle: ChatPanelHandle
+        var fingerprint: String
+        var pollingFallback: Bool  // true if observer registration failed for this panel
     }
 
     let outputDirectory: URL
@@ -21,11 +30,12 @@ class ChatWatcher {
     private var tracker: ConversationTracker
     private var writer: MarkdownWriter
 
-    // AXObserver state
+    // AXObserver — one shared observer per Dia PID
     private var observer: AXObserver?
     private var observedPid: pid_t = 0
-    private var observedElement: AXUIElement?
-    private var usingPollingFallback: Bool = false
+
+    // Per-panel tracking — keyed by CFHash of messageList
+    private var trackedPanels: [UInt: TrackedPanel] = [:]
 
     init(outputDirectory: URL) throws {
         self.outputDirectory = outputDirectory
@@ -36,6 +46,10 @@ class ChatWatcher {
     // MARK: - Public API
 
     /// Start the watch loop. Blocks the current thread — runs via RunLoop.
+    ///
+    /// In `diaAbsent`, polls every 30s for Dia's PID.
+    /// In `discovering`, polls every 15s for panels. Per-panel AXObservers
+    /// provide instant change detection between polls.
     func start() {
         log("ChatWatcher starting, output: \(outputDirectory.path)")
 
@@ -47,27 +61,17 @@ class ChatWatcher {
                 case .diaAbsent:
                     pollForDia()
 
-                case .noChatOpen:
-                    // AXObserver should be active, but check liveness and
-                    // transcript availability as a safety net.
-                    checkNoChatOpen()
-
-                case .watching:
-                    if usingPollingFallback {
-                        pollForChanges()
-                    } else {
-                        verifyDiaStillRunning()
-                    }
+                case .discovering:
+                    discoverAndReconcile()
                 }
 
-                // Skip sleep if state just changed — act on the new state immediately
                 guard state == previousState else { return }
 
                 switch state {
                 case .diaAbsent:
                     RunLoop.current.run(until: Date(timeIntervalSinceNow: 30))
-                case .noChatOpen, .watching:
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 5))
+                case .discovering:
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 15))
                 }
             }
         }
@@ -82,95 +86,105 @@ class ChatWatcher {
         log("Dia process found (pid \(pid))")
 
         if setupObserver(pid: pid) {
-            log("AXObserver registered on Dia")
+            log("AXObserver created for Dia")
         } else {
-            log("AXObserver setup failed — will use polling fallback")
-            usingPollingFallback = true
+            log("AXObserver creation failed — panels will use polling fallback")
         }
 
-        let captures = AccessibilityReader.getAllChatCaptures()
-        if !captures.isEmpty {
-            log("Found \(captures.count) populated conversation transcript(s)")
-            for capture in captures {
-                handleCapture(capture)
-            }
-            transition(to: .watching)
-        } else {
-            transition(to: .noChatOpen)
-        }
+        observedPid = pid
+        transition(to: .discovering)
     }
 
-    // MARK: - State: noChatOpen
+    // MARK: - State: discovering
 
-    private func checkNoChatOpen() {
-        guard AccessibilityReader.findDiaProcess() != nil else {
-            teardownObserver()
-            transition(to: .diaAbsent)
-            return
-        }
-
-        let captures = AccessibilityReader.getAllChatCaptures()
-        if !captures.isEmpty {
-            log("Conversation transcript detected (\(captures.count) panel(s))")
-            for capture in captures {
-                handleCapture(capture)
-            }
-            transition(to: .watching)
-        }
-    }
-
-    // MARK: - State: watching
-
-    private func pollForChanges() {
-        guard AccessibilityReader.findDiaProcess() != nil else {
-            teardownObserver()
-            transition(to: .diaAbsent)
-            return
-        }
-
-        let captures = AccessibilityReader.getAllChatCaptures()
-        if captures.isEmpty {
-            transition(to: .noChatOpen)
-            return
-        }
-
-        for capture in captures {
-            handleCapture(capture)
-        }
-    }
-
-    private func verifyDiaStillRunning() {
+    /// Poll for panels, register observers on new ones, tear down stale ones.
+    private func discoverAndReconcile() {
+        // Check Dia is still running
         guard let pid = AccessibilityReader.findDiaProcess() else {
-            teardownObserver()
+            teardownAll()
             transition(to: .diaAbsent)
             return
         }
 
+        // PID changed — Dia was restarted
         if pid != observedPid {
             Logger.warn("Dia PID changed (\(observedPid) -> \(pid)) — reconnecting")
-            teardownObserver()
-            transition(to: .diaAbsent)
-        } else {
-            // Process all panels — if none exist, go to noChatOpen
-            let captures = AccessibilityReader.getAllChatCaptures()
-            if captures.isEmpty {
-                transition(to: .noChatOpen)
-            } else {
-                for capture in captures {
-                    handleCapture(capture)
+            teardownAll()
+            observedPid = pid
+            if setupObserver(pid: pid) {
+                log("AXObserver recreated for new Dia PID")
+            }
+        }
+
+        // Discover all current panels
+        let handles = AccessibilityReader.getAllPanelHandles()
+        let currentKeys = Set(handles.map { CFHash($0.messageList) })
+        let trackedKeys = Set(trackedPanels.keys)
+
+        // Tear down panels that no longer exist
+        for key in trackedKeys.subtracting(currentKeys) {
+            if let panel = trackedPanels[key] {
+                log("Panel gone: \(panel.fingerprint.prefix(8))...")
+                unregisterPanelNotifications(panel)
+                trackedPanels.removeValue(forKey: key)
+            }
+        }
+
+        // Process each current panel
+        for handle in handles {
+            let key = CFHash(handle.messageList)
+            let messages = ChatParser.parse(groups: handle.groups)
+            guard !messages.isEmpty else { continue }
+
+            let fingerprint = ConversationTracker.fingerprint(for: messages)
+
+            if trackedPanels[key] == nil {
+                // New panel — register observer and process
+                var panel = TrackedPanel(
+                    handle: handle,
+                    fingerprint: fingerprint,
+                    pollingFallback: observer == nil
+                )
+
+                if observer != nil {
+                    let registered = registerPanelNotifications(handle)
+                    panel.pollingFallback = !registered
+                    if registered {
+                        log("Observer registered on panel \(fingerprint.prefix(8))...")
+                    }
                 }
+
+                trackedPanels[key] = panel
+                handleMessages(messages, metadata: handle.metadata)
+            } else {
+                // Existing panel — process via poll (observer handles between polls)
+                trackedPanels[key]?.fingerprint = fingerprint
+                handleMessages(messages, metadata: handle.metadata)
+            }
+        }
+
+        // Update active fingerprints for prune exemption
+        let activeFingerprints = Set(trackedPanels.values.map(\.fingerprint))
+        tracker.setActiveFingerprints(activeFingerprints)
+
+        // Process panels using polling fallback
+        for (key, panel) in trackedPanels where panel.pollingFallback {
+            if let groups = AccessibilityReader.rereadGroups(from: panel.handle) {
+                let messages = ChatParser.parse(groups: groups)
+                guard !messages.isEmpty else { continue }
+                handleMessages(messages, metadata: panel.handle.metadata)
+            } else {
+                // Stale element — remove, will be rediscovered next cycle
+                log("Stale panel (polling fallback): \(panel.fingerprint.prefix(8))...")
+                trackedPanels.removeValue(forKey: key)
             }
         }
     }
 
-    // MARK: - Core: handle groups via ConversationTracker
+    // MARK: - Core: handle messages via ConversationTracker
 
-    /// Parse groups and delegate to ConversationTracker for identity + file management.
-    private func handleCapture(_ capture: CapturedConversation) {
-        let messages = ChatParser.parse(groups: capture.groups)
-        guard !messages.isEmpty else { return }
-
-        let result = tracker.track(messages: messages, metadata: capture.metadata)
+    private func handleMessages(_ messages: [ChatMessage], metadata: ConversationMetadata?) {
+        let result = tracker.track(messages: messages, metadata: metadata)
 
         switch result {
         case .newConversation(let filePath, let createdAt, let metadata):
@@ -212,36 +226,13 @@ class ChatWatcher {
 
     // MARK: - AXObserver
 
+    /// Create a shared AXObserver for the Dia PID.
+    /// Per-panel notification registrations are added separately.
     private func setupObserver(pid: pid_t) -> Bool {
         var obs: AXObserver?
         let result = AXObserverCreate(pid, axObserverCallback, &obs)
         guard result == .success, let obs = obs else {
             log("AXObserverCreate failed: \(result.rawValue)")
-            return false
-        }
-
-        let appElement = AXUIElementCreateApplication(pid)
-
-        let notifications: [String] = [
-            kAXValueChangedNotification,
-            kAXUIElementDestroyedNotification,
-            kAXCreatedNotification,
-        ]
-
-        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-
-        var registeredAny = false
-        for notification in notifications {
-            let addResult = AXObserverAddNotification(
-                obs, appElement, notification as CFString, refcon
-            )
-            if addResult == .success || addResult == .notificationAlreadyRegistered {
-                registeredAny = true
-            }
-        }
-
-        guard registeredAny else {
-            log("Failed to register any AX notifications")
             return false
         }
 
@@ -252,14 +243,61 @@ class ChatWatcher {
         )
 
         self.observer = obs
-        self.observedPid = pid
-        self.observedElement = appElement
-        self.usingPollingFallback = false
-
         return true
     }
 
-    private func teardownObserver() {
+    /// Register notifications on a specific panel's messageList element.
+    /// Falls back to scrollArea if messageList rejects notifications.
+    private func registerPanelNotifications(_ handle: ChatPanelHandle) -> Bool {
+        guard let obs = observer else { return false }
+
+        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+
+        let notifications: [String] = [
+            kAXValueChangedNotification,
+            kAXUIElementDestroyedNotification,
+            kAXCreatedNotification,
+        ]
+
+        // Try messageList first
+        var registered = false
+        for notif in notifications {
+            let r = AXObserverAddNotification(obs, handle.messageList, notif as CFString, refcon)
+            if r == .success || r == .notificationAlreadyRegistered {
+                registered = true
+            }
+        }
+        if registered { return true }
+
+        // Fall back to scrollArea
+        for notif in notifications {
+            let r = AXObserverAddNotification(obs, handle.scrollArea, notif as CFString, refcon)
+            if r == .success || r == .notificationAlreadyRegistered {
+                registered = true
+            }
+        }
+        return registered
+    }
+
+    /// Remove notification registrations for a panel.
+    private func unregisterPanelNotifications(_ panel: TrackedPanel) {
+        guard let obs = observer else { return }
+
+        let notifications: [String] = [
+            kAXValueChangedNotification,
+            kAXUIElementDestroyedNotification,
+            kAXCreatedNotification,
+        ]
+
+        // Remove from both possible targets (safe to call even if not registered)
+        for notif in notifications {
+            AXObserverRemoveNotification(obs, panel.handle.messageList, notif as CFString)
+            AXObserverRemoveNotification(obs, panel.handle.scrollArea, notif as CFString)
+        }
+    }
+
+    private func teardownAll() {
+        trackedPanels.removeAll()
         if let obs = observer {
             CFRunLoopRemoveSource(
                 CFRunLoopGetCurrent(),
@@ -268,34 +306,33 @@ class ChatWatcher {
             )
         }
         observer = nil
-        observedElement = nil
         observedPid = 0
-        usingPollingFallback = false
     }
 
-    /// Called from the AXObserver C callback — re-extract and diff.
-    fileprivate func handleAXNotification() {
+    /// Called from the AXObserver C callback.
+    /// Identifies which panel changed and re-reads only that panel.
+    fileprivate func handleAXNotification(element: AXUIElement, notification: CFString) {
         autoreleasepool {
-            let captures = AccessibilityReader.getAllChatCaptures()
+            // Find which tracked panel this notification belongs to
+            let matchedKey = trackedPanels.first(where: { _, panel in
+                CFEqual(element, panel.handle.messageList) || CFEqual(element, panel.handle.scrollArea)
+            })?.key
 
-            if captures.isEmpty {
-                if state == .watching {
-                    transition(to: .noChatOpen)
+            if let key = matchedKey, let panel = trackedPanels[key] {
+                // Targeted re-read of just this panel
+                if let groups = AccessibilityReader.rereadGroups(from: panel.handle) {
+                    let messages = ChatParser.parse(groups: groups)
+                    guard !messages.isEmpty else { return }
+                    handleMessages(messages, metadata: panel.handle.metadata)
+                } else {
+                    // Element is stale — remove panel, discovery poll will handle it
+                    log("Stale panel detected via observer: \(panel.fingerprint.prefix(8))...")
+                    unregisterPanelNotifications(panel)
+                    trackedPanels.removeValue(forKey: key)
                 }
-                return
             }
-
-            if state == .noChatOpen {
-                log("Conversation transcript detected via AXObserver (\(captures.count) panel(s))")
-            }
-
-            for capture in captures {
-                handleCapture(capture)
-            }
-
-            if state == .noChatOpen {
-                transition(to: .watching)
-            }
+            // If no match, ignore — could be a child element or already-removed panel.
+            // Discovery poll will catch anything we miss.
         }
     }
 
@@ -322,5 +359,5 @@ private func axObserverCallback(
 ) {
     guard let refcon = refcon else { return }
     let watcher = Unmanaged<ChatWatcher>.fromOpaque(refcon).takeUnretainedValue()
-    watcher.handleAXNotification()
+    watcher.handleAXNotification(element: element, notification: notification)
 }

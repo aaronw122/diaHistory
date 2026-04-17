@@ -5,6 +5,16 @@ struct CapturedConversation {
     let metadata: ConversationMetadata?
 }
 
+/// A handle to a chat panel's AX elements, including container refs for
+/// targeted AXObserver registration.
+struct ChatPanelHandle {
+    let window: AXUIElement
+    let scrollArea: AXUIElement
+    let messageList: AXUIElement  // inner AXList — primary observer target
+    let groups: [AXUIElement]
+    let metadata: ConversationMetadata?
+}
+
 /// Finds the Dia browser process and extracts capturable conversation
 /// transcript AXGroup elements from its accessibility tree.
 struct AccessibilityReader {
@@ -122,10 +132,59 @@ struct AccessibilityReader {
         return CapturedConversation(groups: groups, metadata: extractMetadata(from: window))
     }
 
+    /// Discover a chat panel handle in a window, including container refs for
+    /// targeted AXObserver registration.
+    static func panelHandle(in window: AXUIElement) -> ChatPanelHandle? {
+        guard let (scrollArea, messageList, groups) = findChatElements(in: window) else {
+            return nil
+        }
+        return ChatPanelHandle(
+            window: window,
+            scrollArea: scrollArea,
+            messageList: messageList,
+            groups: groups,
+            metadata: extractMetadata(from: window)
+        )
+    }
+
+    /// Discover panel handles from all populated windows.
+    static func getAllPanelHandles() -> [ChatPanelHandle] {
+        guard let pid = findDiaProcess() else { return [] }
+
+        let appElement = AXUIElementCreateApplication(pid)
+        let windows = discoverWindows(appElement)
+
+        var handles: [ChatPanelHandle] = []
+        for window in windows {
+            if let handle = panelHandle(in: window) {
+                handles.append(handle)
+            }
+        }
+        return handles
+    }
+
+    /// Re-read groups from an existing panel handle without re-walking the tree.
+    /// Returns nil if the element is stale or destroyed.
+    static func rereadGroups(from handle: ChatPanelHandle) -> [AXUIElement]? {
+        guard let children = attribute(.children, of: handle.messageList) as? [AXUIElement] else {
+            return nil
+        }
+        let groups = children.filter { element in
+            guard let r = attribute(.role, of: element) as? String else { return false }
+            return r == kAXGroupRole as String
+        }
+        return groups.count >= 3 ? groups : nil
+    }
+
     /// Walk the window looking for a populated transcript structure:
     /// AXScrollArea → AXList → AXList with 3+ AXGroup children.
     /// Empty/open chats are intentionally ignored until the first message appears.
     private static func findChatGroups(in root: AXUIElement) -> [AXUIElement]? {
+        findChatElements(in: root)?.groups
+    }
+
+    /// Walk the window and return the scroll area, inner message list, and groups.
+    private static func findChatElements(in root: AXUIElement) -> (scrollArea: AXUIElement, messageList: AXUIElement, groups: [AXUIElement])? {
         struct WorkItem {
             let element: AXUIElement
             let depth: Int
@@ -147,8 +206,8 @@ struct AccessibilityReader {
                 guard let role = attribute(.role, of: child) as? String else { continue }
 
                 if role == kAXScrollAreaRole as String,
-                   let groups = findChatListInScrollArea(child) {
-                    return groups
+                   let result = findChatListInScrollArea(child) {
+                    return (scrollArea: child, messageList: result.messageList, groups: result.groups)
                 }
 
                 guard !ignoredTraversalRoles.contains(role) else { continue }
@@ -160,7 +219,7 @@ struct AccessibilityReader {
     }
 
     /// Inside a scroll area, look for AXList → AXList with 3+ AXGroup children.
-    private static func findChatListInScrollArea(_ scrollArea: AXUIElement) -> [AXUIElement]? {
+    private static func findChatListInScrollArea(_ scrollArea: AXUIElement) -> (messageList: AXUIElement, groups: [AXUIElement])? {
         guard let children = attribute(.children, of: scrollArea) as? [AXUIElement] else {
             return nil
         }
@@ -169,16 +228,15 @@ struct AccessibilityReader {
             guard let role = attribute(.role, of: child) as? String,
                   role == kAXListRole as String else { continue }
 
-            // This is the outer AXList — look for inner AXList with AXGroup children
-            if let groups = findGroupsInList(child) {
-                return groups
+            if let result = findGroupsInList(child) {
+                return result
             }
         }
         return nil
     }
 
     /// Inside an outer AXList, look for an inner AXList containing 3+ AXGroup children.
-    private static func findGroupsInList(_ list: AXUIElement) -> [AXUIElement]? {
+    private static func findGroupsInList(_ list: AXUIElement) -> (messageList: AXUIElement, groups: [AXUIElement])? {
         guard let children = attribute(.children, of: list) as? [AXUIElement] else {
             return nil
         }
@@ -187,7 +245,6 @@ struct AccessibilityReader {
             guard let role = attribute(.role, of: child) as? String,
                   role == kAXListRole as String else { continue }
 
-            // Inner AXList found — collect its AXGroup children
             guard let innerChildren = attribute(.children, of: child) as? [AXUIElement] else {
                 continue
             }
@@ -198,7 +255,7 @@ struct AccessibilityReader {
             }
 
             if groups.count >= 3 {
-                return groups
+                return (messageList: child, groups: groups)
             }
         }
         return nil

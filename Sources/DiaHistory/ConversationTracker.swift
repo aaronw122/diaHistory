@@ -6,9 +6,41 @@ import Foundation
 /// Persistent state tracking all known conversations.
 struct ConversationState: Codable {
     var conversations: [String: ConversationRecord]  // fingerprint → record
-    var activeFingerprint: String?
+    // Multiple panels can be active simultaneously across Dia windows.
+    // All active fingerprints are exempt from pruning.
+    var activeFingerprints: Set<String>
 
-    static let empty = ConversationState(conversations: [:], activeFingerprint: nil)
+    // Backwards-compatible decoding: old state files have `activeFingerprint: String?`
+    enum CodingKeys: String, CodingKey {
+        case conversations
+        case activeFingerprints
+        case activeFingerprint  // legacy
+    }
+
+    init(conversations: [String: ConversationRecord] = [:], activeFingerprints: Set<String> = []) {
+        self.conversations = conversations
+        self.activeFingerprints = activeFingerprints
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conversations = try container.decode([String: ConversationRecord].self, forKey: .conversations)
+        if let set = try container.decodeIfPresent(Set<String>.self, forKey: .activeFingerprints) {
+            activeFingerprints = set
+        } else if let single = try container.decodeIfPresent(String.self, forKey: .activeFingerprint) {
+            activeFingerprints = [single]
+        } else {
+            activeFingerprints = []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(conversations, forKey: .conversations)
+        try container.encode(activeFingerprints, forKey: .activeFingerprints)
+    }
+
+    static let empty = ConversationState()
 }
 
 /// A single conversation's metadata.
@@ -58,6 +90,11 @@ class ConversationTracker {
 
     // MARK: - Public API
 
+    /// Update the set of currently active fingerprints (for prune exemption).
+    func setActiveFingerprints(_ fingerprints: Set<String>) {
+        state.activeFingerprints = fingerprints
+    }
+
     /// Given current messages, determine if this is a new or existing conversation.
     func track(messages: [ChatMessage], metadata: ConversationMetadata?) -> TrackingResult {
         guard !messages.isEmpty else { return .noChange }
@@ -67,9 +104,7 @@ class ConversationTracker {
 
         // Known conversation (active or returning to) — check for changes
         if let record = state.conversations[fingerprint] {
-            if fingerprint != state.activeFingerprint {
-                state.activeFingerprint = fingerprint
-            }
+            state.activeFingerprints.insert(fingerprint)
 
             let countChanged = messages.count != record.lastMessageCount
             let hashChanged = record.contentHash == nil || record.contentHash != newHash
@@ -113,7 +148,7 @@ class ConversationTracker {
         )
 
         state.conversations[fingerprint] = record
-        state.activeFingerprint = fingerprint
+        state.activeFingerprints.insert(fingerprint)
         state.conversations[fingerprint]?.lastUpdatedAt = date
 
         let filePath = outputDirectory.appendingPathComponent(filename)
@@ -131,7 +166,7 @@ class ConversationTracker {
         let cutoff = Date().addingTimeInterval(-86400)  // 24 hours
         let before = state.conversations.count
         state.conversations = state.conversations.filter { key, record in
-            if key == state.activeFingerprint { return true }
+            if state.activeFingerprints.contains(key) { return true }
             let lastActive = record.lastUpdatedAt ?? record.createdAt
             return lastActive > cutoff
         }
