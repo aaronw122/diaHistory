@@ -7,6 +7,7 @@ enum DiaHistoryError: Error, LocalizedError {
     case noChatPanel
     case fileWriteError(String)
     case stateCorrupted(String)
+    case installFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +21,8 @@ enum DiaHistoryError: Error, LocalizedError {
             return "File write failed: \(detail)"
         case .stateCorrupted(let detail):
             return "State file corrupted: \(detail)"
+        case .installFailed(let detail):
+            return "Install failed: \(detail)"
         }
     }
 }

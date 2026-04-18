@@ -35,12 +35,11 @@ struct PermissionChecker {
             NSWorkspace.shared.open(url)
         }
 
-        let binaryURL = stableBinaryPath
-
-        // Brief delay so Settings opens first
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            NSWorkspace.shared.activateFileViewerSelecting([binaryURL])
-        }
+        // Brief delay so Settings opens first, then reveal binary in Finder.
+        // Must be synchronous — this CLI has no main run loop, so
+        // DispatchQueue.main.asyncAfter blocks never execute.
+        Thread.sleep(forTimeInterval: 1.0)
+        NSWorkspace.shared.activateFileViewerSelecting([stableBinaryPath])
     }
 
     /// Print user-friendly instructions for granting permissions to stderr.

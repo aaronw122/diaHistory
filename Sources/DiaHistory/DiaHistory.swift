@@ -30,6 +30,9 @@ struct DiaHistory: ParsableCommand {
     @Flag(name: .long, help: "Dump Dia's accessibility tree for debugging.")
     var debugTree: Bool = false
 
+    @Flag(name: .long, help: .hidden)
+    var fromStable: Bool = false
+
     // MARK: - Resolved paths
 
     private var resolvedOutputDirectory: URL {
@@ -86,19 +89,32 @@ struct DiaHistory: ParsableCommand {
 
     private func runInstall() throws {
         let outputDir = resolvedOutputDirectory
+        let stablePath = Self.stableBinaryPath.path
 
         Logger.info("Preparing LaunchAgent installation...")
 
+        if fromStable {
+            // Already running from the stable path — request permission and finish
+            try ensureAccessibilityPermission(waitForGrant: true)
+            try ensureOutputDirectoryExists(outputDir)
+            try LaunchAgent.install(binaryPath: stablePath, outputDirectory: outputDir.path)
+            return
+        }
+
         // 1. Copy binary to stable location
-        let stablePath = try installToStablePath()
-        Logger.info("Binary installed to \(stablePath)")
+        let installed = try installToStablePath()
+        Logger.info("Binary installed to \(installed)")
 
-        // 2. Request permission — the stable binary is what TCC will see
-        try ensureAccessibilityPermission(waitForGrant: true)
-        try ensureOutputDirectoryExists(outputDir)
-
-        // 3. Install LaunchAgent pointing to the stable binary
-        try LaunchAgent.install(binaryPath: stablePath, outputDirectory: outputDir.path)
+        // 2. Re-exec into the stable binary so TCC sees the right process identity.
+        //    Without this, AXIsProcessTrusted() checks the Homebrew binary while the
+        //    user adds the stable binary to Accessibility — a mismatch that hangs forever.
+        var args = ["diahistory", "--install", "--from-stable", "--output", outputDir.path]
+        if verbose { args.append("--verbose") }
+        if json { args.append("--json") }
+        let cArgs = args.map { strdup($0) } + [nil]
+        execv(installed, cArgs)
+        // execv only returns on failure
+        throw DiaHistoryError.installFailed("Failed to re-exec stable binary: \(String(cString: strerror(errno)))")
     }
 
     /// Copy the current binary to a stable user-owned location.
