@@ -37,6 +37,11 @@ class ChatWatcher {
     // Per-panel tracking — keyed by CFHash of messageList
     private var trackedPanels: [UInt: TrackedPanel] = [:]
 
+    // Debounce AX notifications: coalesce rapid-fire updates (e.g. streaming)
+    // into a single re-read after a short delay.
+    private var pendingNotifications: [UInt: Timer] = [:]
+    private let debounceInterval: TimeInterval = 0.5
+
     init(outputDirectory: URL) throws {
         self.outputDirectory = outputDirectory
         self.writer = try MarkdownWriter(outputDirectory: outputDirectory)
@@ -52,6 +57,19 @@ class ChatWatcher {
     /// provide instant change detection between polls.
     func start() {
         log("ChatWatcher starting, output: \(outputDirectory.path)")
+
+        // Prune stale state on launch and persist immediately
+        tracker.pruneStaleConversations()
+        try? tracker.save()
+
+        // Schedule periodic pruning every 24 hours
+        let pruneTimer = Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.tracker.pruneStaleConversations()
+            try? self.tracker.save()
+        }
+        pruneTimer.tolerance = 300  // 5 min tolerance for system scheduling efficiency
+        RunLoop.current.add(pruneTimer, forMode: .common)
 
         while true {
             autoreleasepool {
@@ -136,7 +154,7 @@ class ChatWatcher {
             let messages = ChatParser.parse(groups: handle.groups)
             guard !messages.isEmpty else { continue }
 
-            let fingerprint = ConversationTracker.fingerprint(for: messages)
+            let fingerprint = ConversationTracker.fingerprint(for: messages, domain: handle.metadata?.domain)
 
             if trackedPanels[key] == nil {
                 // New panel — register observer and process
@@ -297,6 +315,8 @@ class ChatWatcher {
     }
 
     private func teardownAll() {
+        pendingNotifications.values.forEach { $0.invalidate() }
+        pendingNotifications.removeAll()
         trackedPanels.removeAll()
         if let obs = observer {
             CFRunLoopRemoveSource(
@@ -310,29 +330,42 @@ class ChatWatcher {
     }
 
     /// Called from the AXObserver C callback.
-    /// Identifies which panel changed and re-reads only that panel.
+    /// Debounces rapid notifications (e.g. streaming responses) into a single
+    /// re-read after `debounceInterval` of quiet.
     fileprivate func handleAXNotification(element: AXUIElement, notification: CFString) {
-        autoreleasepool {
-            // Find which tracked panel this notification belongs to
-            let matchedKey = trackedPanels.first(where: { _, panel in
-                CFEqual(element, panel.handle.messageList) || CFEqual(element, panel.handle.scrollArea)
-            })?.key
+        // Find which tracked panel this notification belongs to
+        let matchedKey = trackedPanels.first(where: { _, panel in
+            CFEqual(element, panel.handle.messageList) || CFEqual(element, panel.handle.scrollArea)
+        })?.key
 
-            if let key = matchedKey, let panel = trackedPanels[key] {
-                // Targeted re-read of just this panel
-                if let groups = AccessibilityReader.rereadGroups(from: panel.handle) {
-                    let messages = ChatParser.parse(groups: groups)
-                    guard !messages.isEmpty else { return }
-                    handleMessages(messages, metadata: panel.handle.metadata)
-                } else {
-                    // Element is stale — remove panel, discovery poll will handle it
-                    log("Stale panel detected via observer: \(panel.fingerprint.prefix(8))...")
-                    unregisterPanelNotifications(panel)
-                    trackedPanels.removeValue(forKey: key)
-                }
+        guard let key = matchedKey else { return }
+
+        // Cancel any pending timer for this panel and schedule a new one
+        pendingNotifications[key]?.invalidate()
+        pendingNotifications[key] = Timer.scheduledTimer(
+            withTimeInterval: debounceInterval, repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.pendingNotifications.removeValue(forKey: key)
+            self.processPanel(key: key)
+        }
+    }
+
+    /// Re-read a single panel's content and process changes.
+    private func processPanel(key: UInt) {
+        autoreleasepool {
+            guard let panel = trackedPanels[key] else { return }
+
+            if let groups = AccessibilityReader.rereadGroups(from: panel.handle) {
+                let messages = ChatParser.parse(groups: groups)
+                guard !messages.isEmpty else { return }
+                handleMessages(messages, metadata: panel.handle.metadata)
+            } else {
+                // Element is stale — remove panel, discovery poll will handle it
+                log("Stale panel detected via observer: \(panel.fingerprint.prefix(8))...")
+                unregisterPanelNotifications(panel)
+                trackedPanels.removeValue(forKey: key)
             }
-            // If no match, ignore — could be a child element or already-removed panel.
-            // Discovery poll will catch anything we miss.
         }
     }
 
