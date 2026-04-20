@@ -306,7 +306,6 @@ struct DiaHistory: ParsableCommand {
             PermissionChecker.waitForPermission()
         } else {
             _ = PermissionChecker.checkAccessibility(prompt: true)
-            PermissionChecker.printPermissionInstructions()
             throw DiaHistoryError.noAccessibilityPermission
         }
 
