@@ -76,6 +76,10 @@ struct DiaHistory: ParsableCommand {
         }
     }
 
+    /// Codesign identifier — must stay constant across versions so TCC
+    /// recognises the binary after upgrades.
+    static let codesignIdentifier = "com.diahistory.agent"
+
     /// Stable install location — survives Homebrew upgrades and gives TCC a
     /// consistent binary identity for Accessibility permission.
     private static let stableBinDir: URL = {
@@ -139,10 +143,16 @@ struct DiaHistory: ParsableCommand {
         // Copy
         try fm.copyItem(atPath: resolvedPath, toPath: stableBinary.path)
 
-        // Codesign the stable copy
+        // Codesign with a stable identifier so TCC recognises the binary
+        // across upgrades.  Without --identifier, ad-hoc signing appends a
+        // random hash that changes every build, causing stale TCC entries.
         let codesign = Process()
         codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--force", "--sign", "-", stableBinary.path]
+        codesign.arguments = [
+            "--force", "--sign", "-",
+            "--identifier", Self.codesignIdentifier,
+            stableBinary.path,
+        ]
         codesign.standardOutput = FileHandle.nullDevice
         codesign.standardError = FileHandle.nullDevice
         try codesign.run()

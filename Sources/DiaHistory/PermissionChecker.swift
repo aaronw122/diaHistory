@@ -62,6 +62,10 @@ struct PermissionChecker {
     static func waitForPermission(interval: TimeInterval = 5.0) {
         guard !checkAccessibility(prompt: false) else { return }
 
+        // Clear stale TCC entries from previous installs so the fresh binary
+        // gets a clean prompt instead of inheriting an old (wrong) entry.
+        resetTCCEntry()
+
         // Try the system prompt first (works on some macOS versions)
         _ = checkAccessibility(prompt: true)
 
@@ -75,6 +79,24 @@ struct PermissionChecker {
         }
 
         Logger.info("Accessibility permission granted.")
+    }
+
+    // MARK: - TCC Reset
+
+    /// Remove stale Accessibility entries for our identifier so a fresh
+    /// install gets a clean TCC prompt.
+    static func resetTCCEntry() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        process.arguments = ["reset", "Accessibility", DiaHistory.codesignIdentifier]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            Logger.debug("tccutil reset failed (non-fatal): \(error)")
+        }
     }
 
     // MARK: - Codesigning
