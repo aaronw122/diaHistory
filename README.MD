@@ -32,6 +32,7 @@ Dia conversations are ephemeral by default — once you close a tab, the context
 2. Run `diahistory --install`
 3. If prompted, enable `diahistory` in **System Settings → Privacy & Security → Accessibility**
 4. Once permission is granted, run `diahistory --install` again to restart the daemon with the new permission
+5. Then give the tool permissions to edit documents folder(where the chats are stored by default)
 
 After that, diaHistory will start automatically on login and keep capturing in the background.
 
