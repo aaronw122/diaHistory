@@ -25,11 +25,12 @@ struct ChatParser {
                 }
             }
         }
-        // If there's leftover tool text, attach it to the last assistant message
-        if !toolBuffer.isEmpty, let lastIndex = messages.lastIndex(where: { $0.role == .assistant }) {
-            let prefix = toolBuffer.map { "[\($0)]" }.joined(separator: "\n")
-            let existing = messages[lastIndex].text
-            messages[lastIndex] = ChatMessage(role: .assistant, text: prefix + "\n" + existing)
+        // If there's leftover tool text (tool call in progress, no subsequent assistant
+        // message yet), append as a standalone entry rather than retroactively modifying
+        // an earlier message.
+        if !toolBuffer.isEmpty {
+            let text = toolBuffer.map { "[\($0)]" }.joined(separator: "\n")
+            messages.append(ChatMessage(role: .tool, text: text))
         }
         return messages
     }

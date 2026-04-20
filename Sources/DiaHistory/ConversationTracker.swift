@@ -52,6 +52,7 @@ struct ConversationRecord: Codable {
     var metadata: ConversationMetadata?
     let createdAt: Date
     var lastUpdatedAt: Date?  // nil for records from older state files
+    var messageFingerprint: String?  // Domain-free fingerprint for cross-domain fallback lookup
 }
 
 // MARK: - Tracking Result
@@ -99,8 +100,25 @@ class ConversationTracker {
     func track(messages: [ChatMessage], metadata: ConversationMetadata?) -> TrackingResult {
         guard !messages.isEmpty else { return .noChange }
 
-        let fingerprint = Self.fingerprint(for: messages)
+        let fingerprint = Self.fingerprint(for: messages, domain: metadata?.domain)
         let newHash = Self.contentHash(for: messages)
+
+        // If domain changed or arrived late, the fingerprint won't match.
+        // Fall back to message-only fingerprint to find the existing conversation,
+        // then migrate it to the new key. Also provides backward compat with
+        // pre-domain state files.
+        if state.conversations[fingerprint] == nil {
+            let msgFP = Self.fingerprint(for: messages)
+            // Try legacy key (pre-domain state files stored under message-only fingerprint)
+            let legacyKey = state.conversations[msgFP] != nil ? msgFP : nil
+            // Try matching by stored messageFingerprint (domain drift)
+            let driftKey = state.conversations.first(where: { $0.value.messageFingerprint == msgFP })?.key
+            if let oldKey = legacyKey ?? driftKey, oldKey != fingerprint {
+                state.conversations[fingerprint] = state.conversations[oldKey]
+                state.conversations.removeValue(forKey: oldKey)
+                state.activeFingerprints.remove(oldKey)
+            }
+        }
 
         // Known conversation (active or returning to) — check for changes
         if let record = state.conversations[fingerprint] {
@@ -144,7 +162,8 @@ class ConversationTracker {
             lastMessageCount: messages.count,
             contentHash: newHash,
             metadata: ConversationMetadata.mergedPreservingExisting(existing: nil, candidate: metadata),
-            createdAt: date
+            createdAt: date,
+            messageFingerprint: Self.fingerprint(for: messages)
         )
 
         state.conversations[fingerprint] = record
@@ -239,7 +258,7 @@ class ConversationTracker {
             ".\(Self.indexFilename).tmp.\(UUID().uuidString)"
         )
         do {
-            try content.write(to: tempURL, atomically: true, encoding: .utf8)
+            try content.write(to: tempURL, atomically: false, encoding: .utf8)
             _ = try FileManager.default.replaceItemAt(indexURL, withItemAt: tempURL)
         } catch {
             try? FileManager.default.removeItem(at: tempURL)
@@ -250,10 +269,13 @@ class ConversationTracker {
 
     // MARK: - Fingerprinting & Hashing
 
-    /// Generate a SHA256 fingerprint from the first user message in the conversation.
-    static func fingerprint(for messages: [ChatMessage]) -> String {
+    /// Generate a SHA256 fingerprint from the domain (if available) and the first
+    /// user message. Including the domain prevents collisions when the same first
+    /// message is sent on different sites (e.g. "hello" on claude.ai vs chatgpt.com).
+    static func fingerprint(for messages: [ChatMessage], domain: String? = nil) -> String {
         let firstUserText = messages.first(where: { $0.role == .user })?.text ?? ""
-        let data = Data(firstUserText.utf8)
+        let input = (domain ?? "") + "\0" + firstUserText
+        let data = Data(input.utf8)
         let hash = SHA256.hash(data: data)
         return hash.compactMap { String(format: "%02x", $0) }.joined()
     }

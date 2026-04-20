@@ -334,12 +334,18 @@ struct DiaHistory: ParsableCommand {
 
     private func installSignalHandlers() {
         signal(SIGINT) { _ in
-            Logger.info("Received SIGINT — shutting down.")
-            Darwin.exit(0)
+            let msg = "Received SIGINT — shutting down.\n"
+            msg.utf8CString.withUnsafeBufferPointer { buf in
+                _ = write(STDERR_FILENO, buf.baseAddress, buf.count - 1)
+            }
+            _exit(0)
         }
         signal(SIGTERM) { _ in
-            Logger.info("Received SIGTERM — shutting down.")
-            Darwin.exit(1)
+            let msg = "Received SIGTERM — shutting down.\n"
+            msg.utf8CString.withUnsafeBufferPointer { buf in
+                _ = write(STDERR_FILENO, buf.baseAddress, buf.count - 1)
+            }
+            _exit(0)
         }
     }
 }
